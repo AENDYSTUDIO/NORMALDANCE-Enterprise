@@ -78,6 +78,29 @@ global.fetch = jest.fn()
 // Mock WebSocket
 global.WebSocket = jest.fn()
 
+// Mock Request for Next.js API routes
+global.Request = class Request {
+  constructor(input, init = {}) {
+    this.url = typeof input === 'string' ? input : input.toString()
+    this.method = init.method || 'GET'
+    this.headers = new Map()
+    this.body = init.body || null
+    if (init.headers) {
+      Object.entries(init.headers).forEach(([key, value]) => {
+        this.headers.set(key, value)
+      })
+    }
+  }
+  
+  json() {
+    return Promise.resolve(JSON.parse(this.body))
+  }
+
+  text() {
+    return Promise.resolve(this.body)
+  }
+}
+
 // Mock console methods to reduce noise during tests
 beforeEach(() => {
   jest.spyOn(console, 'log').mockImplementation(() => {})
@@ -127,10 +150,56 @@ jest.mock('mime-types', () => require('./tests/__mocks__/mime-types'))
 
 // Mock Solana web3
 jest.mock('@solana/web3.js', () => ({
-  Connection: jest.fn(),
-  PublicKey: jest.fn(),
-  Transaction: jest.fn(),
-  SystemProgram: jest.fn(),
+  Connection: jest.fn().mockImplementation(() => ({
+    getBalance: jest.fn().mockResolvedValue(1000000000),
+    getAccountInfo: jest.fn().mockResolvedValue({
+      data: Buffer.from('test'),
+      executable: false,
+      owner: new Uint8Array([1, 2, 3]),
+      lamports: 1000000000,
+      rentEpoch: 123,
+    }),
+    getParsedAccountInfo: jest.fn().mockResolvedValue({
+      data: {
+        parsed: {
+          info: {
+            mint: 'test-mint',
+            supply: 1000000000,
+            decimals: 9,
+          }
+        }
+      },
+      executable: false,
+      owner: new Uint8Array([1, 2, 3]),
+      lamports: 1000000000,
+      rentEpoch: 123,
+    }),
+    sendRawTransaction: jest.fn().mockResolvedValue('tx-hash'),
+    confirmTransaction: jest.fn().mockResolvedValue({
+      slot: 123,
+      confirmations: 1,
+      err: null,
+    }),
+    getLatestBlockhash: jest.fn().mockResolvedValue({
+      blockhash: 'test-blockhash',
+      lastValidBlockHeight: 1000,
+    }),
+    sendTransaction: jest.fn().mockResolvedValue('tx-hash'),
+  })),
+  PublicKey: jest.fn().mockImplementation((publicKey) => ({
+    toBytes: () => new Uint8Array([1, 2, 3]),
+    toString: () => publicKey,
+  })),
+  Transaction: jest.fn().mockImplementation(() => ({
+    add: jest.fn(),
+    serialize: jest.fn().mockReturnValue(Buffer.from('test')),
+    sign: jest.fn(),
+  })),
+  SystemProgram: {
+    programId: new Uint8Array([1, 2, 3]),
+    createAccount: jest.fn(),
+    transfer: jest.fn(),
+  },
   LAMPORTS_PER_SOL: 1000000000,
   Keypair: jest.fn(),
   sendAndConfirmTransaction: jest.fn(),
@@ -144,20 +213,20 @@ jest.mock('@solana/web3.js', () => ({
   createAssociatedTokenAccount: jest.fn(),
   getAccount: jest.fn(),
   getBalance: jest.fn(),
-  sendTransaction: jest.fn(),
   clusterApiUrl: jest.fn().mockReturnValue('https://api.devnet.solana.com'),
 }))
 
 // Mock wallet adapters
 jest.mock('@solana/wallet-adapter-base', () => ({
-  WalletAdapter: class {
-    constructor() {
-      this.connect = jest.fn()
-      this.disconnect = jest.fn()
-      this.signTransaction = jest.fn()
-      this.signAllTransactions = jest.fn()
-    }
-  },
+  Wallet: jest.fn(),
+  WalletAdapter: jest.fn(),
+  WalletError: jest.fn(),
+  WalletNotConnectedError: jest.fn(),
+  WalletNotReadyError: jest.fn(),
+  WalletDisconnectedError: jest.fn(),
+  WalletLoadFailedError: jest.fn(),
+  WalletSendTransactionError: jest.fn(),
+  WalletSignTransactionError: jest.fn(),
   BaseSignerWalletAdapter: class {
     constructor() {
       this.connect = jest.fn()
@@ -166,6 +235,33 @@ jest.mock('@solana/wallet-adapter-base', () => ({
       this.signAllTransactions = jest.fn()
     }
   },
+}))
+
+// Mock wallet adapter react
+jest.mock('@solana/wallet-adapter-react', () => ({
+  useWallet: jest.fn().mockReturnValue({
+    connected: true,
+    publicKey: new Uint8Array([1, 2, 3]),
+    signTransaction: jest.fn().mockResolvedValue({
+      serialize: () => Buffer.from('test'),
+    }),
+    signAllTransactions: jest.fn().mockResolvedValue([
+      {
+        serialize: () => Buffer.from('test'),
+      }
+    ]),
+    sendTransaction: jest.fn().mockResolvedValue('tx-hash'),
+    disconnect: jest.fn(),
+  }),
+}))
+
+// Mock wallet adapter wallets
+jest.mock('@solana/wallet-adapter-wallets', () => ({
+  PhantomWallet: jest.fn(),
+  SolflareWallet: jest.fn(),
+  LedgerWallet: jest.fn(),
+  TorusWallet: jest.fn(),
+  SlopeWallet: jest.fn(),
 }))
 
 jest.mock('@solana/wallet-adapter-phantom', () => ({
@@ -181,9 +277,29 @@ jest.mock('@solana/wallet-adapter-phantom', () => ({
 
 // Mock Anchor
 jest.mock('@coral-xyz/anchor', () => ({
-  Program: jest.fn().mockImplementation(() => ({})),
-  AnchorProvider: jest.fn().mockImplementation(() => ({})),
-  workspace: jest.fn(),
+  Program: jest.fn().mockImplementation(() => ({
+    account: {
+      fetch: jest.fn().mockResolvedValue({}),
+    },
+    methods: {
+      initialize: jest.fn(),
+      mint: jest.fn(),
+    },
+  })),
+  AnchorProvider: jest.fn().mockImplementation(() => ({
+    connection: {
+      getBalance: jest.fn().mockResolvedValue(1000000000),
+    },
+    wallet: {
+      publicKey: new Uint8Array([1, 2, 3]),
+      signTransaction: jest.fn().mockResolvedValue({
+        serialize: () => Buffer.from('test'),
+      }),
+    },
+  })),
+  workspace: jest.fn().mockReturnValue({
+    program: jest.fn().mockImplementation(() => ({})),
+  }),
 }))
 
 // Mock Prisma
@@ -273,7 +389,7 @@ jest.mock('react-toastify', () => ({
     warning: jest.fn(),
   },
   ToastContainer: jest.fn(),
-}));
+}))
 
 // Mock recharts
 jest.mock('recharts', () => ({

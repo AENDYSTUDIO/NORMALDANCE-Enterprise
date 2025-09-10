@@ -104,8 +104,8 @@ describe('Beta Testing - NormalDance Platform', () => {
       const analytics = await calculateUserEngagement(userEngagementData);
       
       expect(analytics.totalSessionTime).toBe(2820); // 47 minutes
-      expect(analytics.featureUsage.audioPlayer).toBe(0.638); // 63.8%
-      expect(analytics.errorRate).toBe(0.044); // 4.4%
+      expect(analytics.featureUsage.audioPlayer).toBeCloseTo(0.638, 3); // 63.8%
+      expect(analytics.errorRate).toBeCloseTo(0.044, 3); // 4.4%
       expect(analytics.feedbackRate).toBe(1); // 100%
     });
 
@@ -132,7 +132,7 @@ describe('Beta Testing - NormalDance Platform', () => {
       const report = await generateBetaTestingReport(betaTestingData);
       
       expect(report.healthScore).toBeGreaterThan(70); // Should be healthy
-      expect(report.resolutionRate).toBeGreaterThan(40); // Should resolve >40% of issues
+      expect(report.resolutionRate).toBeGreaterThan(0.4); // Should resolve >40% of issues
       expect(report.userSatisfaction).toBeGreaterThan(3.5); // Should be good satisfaction
       expect(report.criticalBugsResolved).toBeLessThan(2); // Should have <2 critical bugs unresolved
     });

@@ -1,0 +1,14 @@
+{
+  "dependencies": {
+    "isomorphic-dompurify": "^2.9.0",
+    "helmet": "^7.1.0",
+    "express-rate-limit": "^7.1.5",
+    "joi": "^17.11.0"
+  },
+  "scripts": {
+    "security:audit": "npm audit --audit-level high",
+    "security:fix": "npm audit fix",
+    "security:test": "npm test -- tests/security",
+    "security:check": "npm run security:audit && npm run security:test"
+  }
+}

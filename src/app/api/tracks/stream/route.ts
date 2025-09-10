@@ -59,7 +59,9 @@ export async function GET(
     headers.set('Accept-Ranges', 'bytes')
     headers.set('Content-Length', chunkSize.toString())
     headers.set('Content-Type', 'audio/mpeg')
-    headers.set('Content-Disposition', `inline; filename="${track.title}.mp3"`)
+    // Sanitize filename to prevent XSS
+    const sanitizedTitle = track.title.replace(/[^a-zA-Z0-9\s\-_]/g, '').substring(0, 100)
+    headers.set('Content-Disposition', `inline; filename="${sanitizedTitle}.mp3"`)
 
     return new NextResponse(fileStream as any, {
       status: range ? 206 : 200,
@@ -126,7 +128,7 @@ export async function POST(
             userId,
             type: 'LISTENING',
             amount: 1, // 1 $NDT token per completed listen
-            reason: `Listening reward for track ${track.title}`
+            reason: `Listening reward for track ${track.id}`
           }
         })
 
@@ -196,7 +198,9 @@ export async function HEAD(
     headers.set('Accept-Ranges', 'bytes')
     headers.set('Content-Length', fileSize.toString())
     headers.set('Content-Type', 'audio/mpeg')
-    headers.set('Content-Disposition', `inline; filename="${track.title}.mp3"`)
+    // Sanitize filename to prevent XSS
+    const sanitizedTitle = track.title.replace(/[^a-zA-Z0-9\s\-_]/g, '').substring(0, 100)
+    headers.set('Content-Disposition', `inline; filename="${sanitizedTitle}.mp3"`)
 
     return new NextResponse(null, {
       status: 200,

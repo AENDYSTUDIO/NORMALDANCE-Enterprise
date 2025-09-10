@@ -1,0 +1,41 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgres-cluster
+spec:
+  instances: 3
+  
+  postgresql:
+    parameters:
+      max_connections: "200"
+      shared_buffers: "256MB"
+      effective_cache_size: "1GB"
+      
+  bootstrap:
+    initdb:
+      database: normaldance
+      owner: normaldance
+      
+  storage:
+    size: 100Gi
+    storageClass: fast-ssd
+    
+  monitoring:
+    enabled: true
+    
+  backup:
+    retentionPolicy: "30d"
+    barmanObjectStore:
+      destinationPath: "s3://normaldance-backups/postgres"
+      
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-rw
+spec:
+  selector:
+    cnpg.io/cluster: postgres-cluster
+    role: primary
+  ports:
+  - port: 5432

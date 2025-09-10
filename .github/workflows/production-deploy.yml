@@ -1,0 +1,43 @@
+name: Production Deployment
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Security Audit
+      run: |
+        npm audit --audit-level high
+        npm run security:test
+        
+  deploy:
+    needs: security-scan
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Build Docker Image
+      run: |
+        docker build -t normaldance:${{ github.sha }} .
+        docker tag normaldance:${{ github.sha }} normaldance:latest
+        
+    - name: Push to Registry
+      run: |
+        echo ${{ secrets.REGISTRY_PASSWORD }} | docker login -u ${{ secrets.REGISTRY_USERNAME }} --password-stdin
+        docker push normaldance:${{ github.sha }}
+        docker push normaldance:latest
+        
+    - name: Deploy to Kubernetes
+      run: |
+        kubectl set image deployment/normaldance-app app=normaldance:${{ github.sha }}
+        kubectl rollout status deployment/normaldance-app --timeout=600s
+        
+    - name: Health Check
+      run: |
+        curl -f https://normaldance.com/api/health || exit 1

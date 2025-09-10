@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { SecuritySanitizer } from '@/lib/security/sanitizer'
 
 // GET /api/tracks/[id] - Get a specific track
 export async function GET(
@@ -52,11 +53,11 @@ export async function PUT(
   try {
     const body = await request.json()
     
-    // Only allow updating certain fields
+    // Only allow updating certain fields with sanitization
     const updateData = {
-      ...(body.title && { title: body.title }),
-      ...(body.artistName && { artistName: body.artistName }),
-      ...(body.genre && { genre: body.genre }),
+      ...(body.title && { title: SecuritySanitizer.validateInput(body.title) }),
+      ...(body.artistName && { artistName: SecuritySanitizer.validateInput(body.artistName) }),
+      ...(body.genre && { genre: SecuritySanitizer.validateInput(body.genre) }),
       ...(body.duration !== undefined && { duration: body.duration }),
       ...(body.metadata !== undefined && { metadata: body.metadata }),
       ...(body.price !== undefined && { price: body.price }),

@@ -1,0 +1,68 @@
+# Конфигурация SSH для сервера 176.108.246.49
+# 
+# Использование:
+# 1. Скопируйте этот файл в ~/.ssh/config
+# 2. Или используйте: ssh -F ~/.ssh/config normaldance-server
+#
+# Основной хост
+Host 176.108.246.49
+    HostName 176.108.246.49
+    User root
+    Port 22
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+    StrictHostKeyChecking yes
+    UserKnownHostsFile ~/.ssh/known_hosts
+    PreferredAuthentications publickey
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
+    # Дополнительные параметры для отладки
+    # LogLevel VERBOSE
+    # ForwardX11 no
+
+# Удобный алиас
+Host normaldance-server
+    HostName 176.108.246.49
+    User root
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+    StrictHostKeyChecking yes
+    UserKnownHostsFile ~/.ssh/known_hosts
+    PreferredAuthentications publickey
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
+
+# Резервный хост с RSA ключом
+Host normaldance-server-rsa
+    HostName 176.108.246.49
+    User root
+    IdentityFile ~/.ssh/id_rsa
+    IdentitiesOnly yes
+    StrictHostKeyChecking yes
+    UserKnownHostsFile ~/.ssh/known_hosts
+    PreferredAuthentications publickey
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
+
+# Хост для отладки с подробным логированием
+Host normaldance-server-debug
+    HostName 176.108.246.49
+    User root
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+    StrictHostKeyChecking yes
+    UserKnownHostsFile ~/.ssh/known_hosts
+    PreferredAuthentications publickey
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
+    LogLevel DEBUG3
+    ForwardX11 no
+
+# Общие настройки для всех хостов
+Host *
+    # Отключаем сжатие для ускорения подключения
+    Compression no
+    # Таймауты
+    ConnectTimeout 30
+    # Отключаем агента SSH если он мешает
+    # AddKeysToAgent no

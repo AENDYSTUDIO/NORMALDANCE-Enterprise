@@ -1,0 +1,346 @@
+# NormalDance Production Docker Compose
+# Optimized for high availability and performance
+version: '3.8'
+
+services:
+  # Reverse Proxy & Load Balancer
+  nginx:
+    image: nginx:alpine
+    container_name: normaldance-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - app
+    restart: unless-stopped
+    networks:
+      - frontend-network
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Application Cluster (3 instances)
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      target: production
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://prod_user:${DB_PASSWORD}@postgres:5432/normaldance_prod
+      - REDIS_URL=redis://redis-cluster:6379
+      - NEXTAUTH_URL=https://normaldance.com
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      - SOLANA_RPC_URL=${SOLANA_RPC_URL}
+      - IPFS_GATEWAY=${IPFS_GATEWAY}
+    volumes:
+      - app_logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis-cluster:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - frontend-network
+      - backend-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # PostgreSQL Master-Slave Setup
+  postgres:
+    image: postgres:15-alpine
+    container_name: normaldance-postgres-master
+    environment:
+      - POSTGRES_DB=normaldance_prod
+      - POSTGRES_USER=prod_user
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_REPLICATION_USER=replicator
+      - POSTGRES_REPLICATION_PASSWORD=${REPLICATION_PASSWORD}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    networks:
+      - database-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prod_user -d normaldance_prod"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # PostgreSQL Read Replica
+  postgres-replica:
+    image: postgres:15-alpine
+    container_name: normaldance-postgres-replica
+    environment:
+      - POSTGRES_USER=prod_user
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - PGUSER=prod_user
+      - POSTGRES_DB=normaldance_prod
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_replica_data:/var/lib/postgresql/data
+    command: |
+      bash -c "
+      until pg_basebackup --pgdata=/var/lib/postgresql/data/pgdata -R --slot=replication_slot --host=postgres --port=5432
+      do
+      echo 'Waiting for primary to connect...'
+      sleep 1s
+      done
+      echo 'Backup done, starting replica...'
+      chmod 0700 /var/lib/postgresql/data/pgdata
+      postgres
+      "
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    networks:
+      - database-network
+
+  # Redis Cluster for High Availability
+  redis-cluster:
+    image: redis:7-alpine
+    container_name: normaldance-redis-cluster
+    command: redis-server --appendonly yes --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    networks:
+      - cache-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    sysctls:
+      - net.core.somaxconn=65535
+
+  # Redis Sentinel for Monitoring
+  redis-sentinel:
+    image: redis:7-alpine
+    container_name: normaldance-redis-sentinel
+    command: redis-sentinel /etc/redis/sentinel.conf
+    volumes:
+      - ./redis/sentinel.conf:/etc/redis/sentinel.conf:ro
+    depends_on:
+      - redis-cluster
+    restart: unless-stopped
+    networks:
+      - cache-network
+
+  # IPFS Node for Decentralized Storage
+  ipfs:
+    image: ipfs/kubo:v0.21.0
+    container_name: normaldance-ipfs
+    environment:
+      - IPFS_PROFILE=server
+    volumes:
+      - ipfs_data:/data/ipfs
+      - ./ipfs/config:/data/ipfs/config:ro
+    ports:
+      - "4001:4001"
+      - "5001:5001"
+      - "8080:8080"
+    restart: unless-stopped
+    networks:
+      - storage-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/api/v0/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Monitoring Stack
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: normaldance-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+    networks:
+      - monitoring-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: normaldance-grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - monitoring-network
+
+  # Log Aggregation
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.8.0
+    container_name: normaldance-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - xpack.security.enabled=false
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    restart: unless-stopped
+    networks:
+      - logging-network
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.8.0
+    container_name: normaldance-logstash
+    volumes:
+      - ./logging/logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+    networks:
+      - logging-network
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.8.0
+    container_name: normaldance-kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+    networks:
+      - logging-network
+
+  # Backup Service
+  backup:
+    image: postgres:15-alpine
+    container_name: normaldance-backup
+    environment:
+      - PGPASSWORD=${DB_PASSWORD}
+    volumes:
+      - backup_data:/backups
+      - ./scripts/backup.sh:/backup.sh:ro
+    command: |
+      sh -c "
+      echo '0 2 * * * /backup.sh' | crontab -
+      crond -f
+      "
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    networks:
+      - database-network
+
+volumes:
+  postgres_data:
+    driver: local
+  postgres_replica_data:
+    driver: local
+  redis_data:
+    driver: local
+  ipfs_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  elasticsearch_data:
+    driver: local
+  backup_data:
+    driver: local
+  app_logs:
+    driver: local
+
+networks:
+  frontend-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.1.0/24
+  backend-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.2.0/24
+  database-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.3.0/24
+  cache-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.4.0/24
+  storage-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.5.0/24
+  monitoring-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.6.0/24
+  logging-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.7.0/24

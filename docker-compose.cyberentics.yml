@@ -1,0 +1,596 @@
+# Cyberentics Docker Compose Configuration
+# Оптимизированная версия для NormalDance платформы
+version: '3.8'
+
+services:
+  # Основное веб-приложение
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    container_name: normaldance-app
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/normaldance
+      - NEXTAUTH_URL=https://api.normaldance.com
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      - SOLANA_RPC_URL=${SOLANA_RPC_URL}
+      - IPFS_URL=${IPFS_URL}
+      - REDIS_URL=redis://redis:6379
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY}
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ipfs:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - normaldance-network
+      - monitoring-network
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+
+  # API Gateway
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+      target: runner
+    container_name: normaldance-api
+    ports:
+      - "8080:8080"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/normaldance
+      - REDIS_URL=redis://redis:6379
+      - SOLANA_RPC_URL=${SOLANA_RPC_URL}
+      - IPFS_URL=${IPFS_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - normaldance-network
+      - monitoring-network
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  # WebSocket сервер
+  websocket:
+    build:
+      context: .
+      dockerfile: Dockerfile.websocket
+      target: runner
+    container_name: normaldance-websocket
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - normaldance-network
+      - monitoring-network
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+        reservations:
+          memory: 128M
+          cpus: '0.125'
+
+  # PostgreSQL база данных
+  postgres:
+    image: postgres:15-alpine
+    container_name: normaldance-postgres
+    environment:
+      - POSTGRES_DB=normaldance
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./backups:/backups:ro
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - normaldance-network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+      placement:
+        constraints: [node.role == manager]
+
+  # Redis кэш
+  redis:
+    image: redis:7-alpine
+    container_name: normaldance-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+      - ./redis/redis.conf:/etc/redis/redis.conf:ro
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "auth", "${REDIS_PASSWORD}", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - normaldance-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  # IPFS для хранения NFT
+  ipfs:
+    image: ipfs/kubo:v0.21.0
+    container_name: normaldance-ipfs
+    ports:
+      - "5001:5001"
+      - "8080:8080"
+    volumes:
+      - ipfs_data:/data/ipfs
+      - ipfs_staging:/tmp/ipfs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/api/v0/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - normaldance-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+
+  # Solana RPC
+  solana:
+    image: solanalabs/solana:latest
+    container_name: normaldance-solana
+    ports:
+      - "8899:8899"
+    volumes:
+      - solana_data:/root/.config/solana
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "solana", "cluster-version"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+    networks:
+      - normaldance-network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+
+  # Filecoin для децентрализованного хранения
+  filecoin:
+    image: filecoin/filecoin-daemon:latest
+    container_name: normaldance-filecoin
+    environment:
+      - LOTUS_API_INFO=/dns4/tcp/8888/http
+      - LOTUS_MINER_API_INFO=/dns4/tcp/8889/http
+    ports:
+      - "8888:8888"
+      - "8889:8889"
+    volumes:
+      - filecoin_data:/var/lib/filecoin
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/rpc/v1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+    networks:
+      - normaldance-network
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 2G
+          cpus: '1.0'
+
+  # Nginx reverse proxy
+  nginx:
+    image: nginx:alpine
+    container_name: normaldance-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./uploads:/var/www/uploads:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - app
+      - api
+      - websocket
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - normaldance-network
+      - monitoring-network
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+        reservations:
+          memory: 64M
+          cpus: '0.125'
+
+  # Prometheus мониторинг
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: normaldance-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+      - '--storage.tsdb.no-lockfile=true'
+      - '--web.enable-admin-api'
+    restart: unless-stopped
+    networks:
+      - monitoring-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  # Grafana дашборды
+  grafana:
+    image: grafana/grafana:latest
+    container_name: normaldance-grafana
+    ports:
+      - "3002:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - monitoring-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  # Alertmanager уведомления
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: normaldance-alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://localhost:9093'
+      - '--cluster.listen-address=0.0.0.0:9094'
+    restart: unless-stopped
+    networks:
+      - monitoring-network
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+        reservations:
+          memory: 64M
+          cpus: '0.125'
+
+  # ELK Stack для логирования
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: normaldance-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+      - xpack.monitoring.collection.enabled=true
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - logging-network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.0
+    container_name: normaldance-logstash
+    volumes:
+      - ./logstash/pipeline:/usr/share/logstash/pipeline:ro
+      - ./logstash/config:/usr/share/logstash/config:ro
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+    networks:
+      - logging-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: normaldance-kibana
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - XPACK_MONITORING_ENABLED=true
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+    networks:
+      - logging-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+
+  # Node Exporter системные метрики
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: normaldance-node-exporter
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    restart: unless-stopped
+    networks:
+      - monitoring-network
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+        reservations:
+          memory: 64M
+          cpus: '0.125'
+
+  # Cadvisor мониторинг контейнеров
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: normaldance-cadvisor
+    ports:
+      - "8082:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    restart: unless-stopped
+    networks:
+      - monitoring-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.25'
+        reservations:
+          memory: 256M
+          cpus: '0.125'
+
+  # Blackbox exporter проверка доступности
+  blackbox:
+    image: prom/blackbox-exporter:latest
+    container_name: normaldance-blackbox
+    ports:
+      - "9115:9115"
+    volumes:
+      - ./monitoring/blackbox/config.yml:/etc/blackbox_exporter/config.yml:ro
+    restart: unless-stopped
+    networks:
+      - monitoring-network
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.125'
+        reservations:
+          memory: 32M
+          cpus: '0.0625'
+
+  # Redis Commander для управления Redis
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: normaldance-redis-commander
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379:0:${REDIS_PASSWORD}
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - normaldance-network
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.125'
+        reservations:
+          memory: 64M
+          cpus: '0.0625'
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  ipfs_data:
+    driver: local
+  ipfs_staging:
+    driver: local
+  filecoin_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  alertmanager_data:
+    driver: local
+  elasticsearch_data:
+    driver: local
+
+networks:
+  normaldance-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+  monitoring-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+  logging-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.22.0.0/16

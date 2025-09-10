@@ -8,6 +8,7 @@ describe('Deflationary Model', () => {
   let model: DeflationaryModel
 
   beforeEach(() => {
+    // @ts-ignore - Mock connection for testing
     model = new DeflationaryModel(mockConnection)
   })
 

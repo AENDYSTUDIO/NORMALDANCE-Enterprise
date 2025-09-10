@@ -1,0 +1,120 @@
+# Cyberentics Minimal Docker Compose Configuration
+# Упрощенная версия для разработки и тестирования
+version: '3.8'
+
+services:
+  # Основное веб-приложение
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    container_name: normaldance-app-dev
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://user:password@postgres:5432/normaldance
+      - NEXTAUTH_URL=http://localhost:3000
+      - NEXTAUTH_SECRET=dev_secret_key
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next  
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - normaldance-network
+
+  # PostgreSQL база данных
+  postgres:
+    image: postgres:15-alpine
+    container_name: normaldance-postgres-dev
+    environment:
+      - POSTGRES_DB=normaldance
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - normaldance-network
+
+  # Redis кэш
+  redis:
+    image: redis:7-alpine
+    container_name: normaldance-redis-dev
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - normaldance-network
+
+  # IPFS для разработки
+  ipfs:
+    image: ipfs/kubo:v0.21.0
+    container_name: normaldance-ipfs-dev
+    ports:
+      - "5001:5001"
+      - "8080:8080"
+    volumes:
+      - ipfs_data:/data/ipfs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/api/v0/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - normaldance-network
+
+  # Redis Commander для управления Redis
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: normaldance-redis-commander-dev
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379:0:
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - normaldance-network
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  ipfs_data:
+    driver: local
+
+networks:
+  normaldance-network:
+    driver: bridge
+    ipam:
+      config:
+      config:
+        - subnet: 172.25.0.0/16

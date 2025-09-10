@@ -1,0 +1,37 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: normaldance-security-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: normaldance
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          role: frontend
+    ports:
+    - protocol: TCP
+      port: 3000
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          role: database
+    ports:
+    - protocol: TCP
+      port: 5432
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: normaldance-secrets
+type: Opaque
+data:
+  database-url: ""  # Base64 encoded
+  jwt-secret: ""    # Base64 encoded
+  solana-rpc: ""    # Base64 encoded

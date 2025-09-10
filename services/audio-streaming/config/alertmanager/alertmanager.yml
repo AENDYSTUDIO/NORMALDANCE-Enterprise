@@ -1,0 +1,106 @@
+global:
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: 'alerts@audio-streaming.com'
+  smtp_auth_username: '${SMTP_USERNAME}'
+  smtp_auth_password: '${SMTP_PASSWORD}'
+
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'default-receiver'
+  routes:
+    - match:
+        severity: critical
+      receiver: 'critical-receiver'
+    - match:
+        severity: warning
+      receiver: 'warning-receiver'
+
+receivers:
+  - name: 'default-receiver'
+    email_configs:
+      - to: 'admin@audio-streaming.com'
+        subject: '[ALERT] {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Instance: {{ .Labels.instance }}
+          Severity: {{ .Labels.severity }}
+          {{ end }}
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#alerts'
+        title: 'Audio Streaming Alert'
+        text: |
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Instance:* {{ .Labels.instance }}
+          *Severity:* {{ .Labels.severity }}
+          {{ end }}
+
+  - name: 'critical-receiver'
+    email_configs:
+      - to: 'admin@audio-streaming.com,oncall@audio-streaming.com'
+        subject: '[CRITICAL] {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}
+          CRITICAL ALERT
+          
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Instance: {{ .Labels.instance }}
+          Severity: {{ .Labels.severity }}
+          
+          This requires immediate attention!
+          {{ end }}
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#critical-alerts'
+        title: '🚨 CRITICAL ALERT'
+        text: |
+          {{ range .Alerts }}
+          🚨 *CRITICAL ALERT*
+          
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Instance:* {{ .Labels.instance }}
+          *Severity:* {{ .Labels.severity }}
+          
+          @channel This requires immediate attention!
+          {{ end }}
+
+  - name: 'warning-receiver'
+    email_configs:
+      - to: 'admin@audio-streaming.com'
+        subject: '[WARNING] {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}
+          Warning Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Instance: {{ .Labels.instance }}
+          Severity: {{ .Labels.severity }}
+          {{ end }}
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK_URL}'
+        channel: '#alerts'
+        title: '⚠️ Warning Alert'
+        text: |
+          {{ range .Alerts }}
+          ⚠️ *Warning Alert*
+          
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Instance:* {{ .Labels.instance }}
+          *Severity:* {{ .Labels.severity }}
+          {{ end }}
+
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'cluster', 'service']

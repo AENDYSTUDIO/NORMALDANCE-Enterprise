@@ -1,0 +1,151 @@
+{
+  "monitoring": {
+    "enabled": true,
+    "check_interval": 30,
+    "max_retries": 3,
+    "notification_enabled": true,
+    "log_retention_days": 7,
+    "health_check_timeout": 10
+  },
+  "alerts": {
+    "cpu_threshold": 90,
+    "memory_threshold": 90,
+    "disk_threshold": 90,
+    "ssl_expiry_days": 7,
+    "response_time_ms": 5000
+  },
+  "endpoints": [
+    {
+      "name": "main",
+      "url": "http://localhost/health",
+      "method": "GET",
+      "expected_status": 200,
+      "timeout": 5
+    },
+    {
+      "name": "api",
+      "url": "http://localhost/api/health",
+      "method": "GET",
+      "expected_status": 200,
+      "timeout": 5
+    },
+    {
+      "name": "grafana",
+      "url": "http://localhost:3003",
+      "method": "GET",
+      "expected_status": 200,
+      "timeout": 10
+    },
+    {
+      "name": "prometheus",
+      "url": "http://localhost:9090",
+      "method": "GET",
+      "expected_status": 200,
+      "timeout": 10
+    }
+  ],
+  "ports": [
+    {
+      "port": 80,
+      "name": "HTTP",
+      "protocol": "tcp"
+    },
+    {
+      "port": 443,
+      "name": "HTTPS",
+      "protocol": "tcp"
+    },
+    {
+      "port": 3003,
+      "name": "Grafana",
+      "protocol": "tcp"
+    },
+    {
+      "port": 9090,
+      "name": "Prometheus",
+      "protocol": "tcp"
+    }
+  ],
+  "containers": [
+    {
+      "name": "nginx",
+      "restart_policy": "unless-stopped"
+    },
+    {
+      "name": "prometheus",
+      "restart_policy": "unless-stopped"
+    },
+    {
+      "name": "grafana",
+      "restart_policy": "unless-stopped"
+    },
+    {
+      "name": "node-exporter",
+      "restart_policy": "unless-stopped"
+    }
+  ],
+  "notifications": {
+    "telegram": {
+      "enabled": false,
+      "bot_token": "${TELEGRAM_BOT_TOKEN}",
+      "chat_id": "${TELEGRAM_CHAT_ID}",
+      "template": "🚨 <b>{{level}}</b>\n\n<b>Service:</b> {{service}}\n<b>Message:</b> {{message}}\n<b>Time:</b> {{timestamp}}"
+    },
+    "email": {
+      "enabled": false,
+      "smtp_server": "${SMTP_SERVER}",
+      "smtp_port": 587,
+      "username": "${SMTP_USERNAME}",
+      "password": "${SMTP_PASSWORD}",
+      "from": "${EMAIL_FROM}",
+      "to": "${EMAIL_TO}",
+      "subject": "Audio Streaming Alert: {{level}}"
+    },
+    "webhook": {
+      "enabled": false,
+      "url": "${WEBHOOK_URL}",
+      "method": "POST",
+      "headers": {
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "service": "audio-streaming",
+        "level": "{{level}}",
+        "message": "{{message}}",
+        "timestamp": "{{timestamp}}"
+      }
+    }
+  },
+  "recovery": {
+    "enabled": true,
+    "strategies": {
+      "container_restart": true,
+      "service_restart": true,
+      "system_restart": false,
+      "backup_restore": false
+    },
+    "cooldown_seconds": 300,
+    "max_attempts_per_hour": 5
+  },
+  "metrics": {
+    "enabled": true,
+    "collect_interval": 60,
+    "retention_days": 30,
+    "metrics": [
+      "cpu_usage",
+      "memory_usage",
+      "disk_usage",
+      "network_io",
+      "container_status",
+      "response_time",
+      "uptime"
+    ]
+  },
+  "logging": {
+    "level": "INFO",
+    "file": "/opt/audio-streaming/logs/monitor.log",
+    "max_size_mb": 100,
+    "backup_count": 5,
+    "format": "[%(asctime)s] [%(levelname)s] %(message)s"
+  }
+}

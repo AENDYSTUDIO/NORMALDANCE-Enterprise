@@ -1,0 +1,52 @@
+{
+  "name": "dnb1st-audio-streaming",
+  "version": "1.0.0",
+  "description": "High-performance audio streaming service for DNB1st music platform",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "build": "npm run build:prod",
+    "build:prod": "webpack --mode production",
+    "docker:build": "docker build -t dnb1st/audio-streaming .",
+    "docker:run": "docker run -p 3001:3001 dnb1st/audio-streaming"
+  },
+  "dependencies": {
+    "socket.io": "^4.7.2",
+    "express": "^4.18.2",
+    "redis": "^4.6.7",
+    "bull": "^4.11.3",
+    "fluent-ffmpeg": "^2.1.2",
+    "jsonwebtoken": "^9.0.2",
+    "cors": "^2.8.5",
+    "helmet": "^7.0.0",
+    "compression": "^1.7.4",
+    "winston": "^3.10.0",
+    "prom-client": "^14.2.0",
+    "prisma": "^5.1.1",
+    "@prisma/client": "^5.1.1",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "jest": "^29.6.2",
+    "supertest": "^6.3.3",
+    "nodemon": "^3.0.1",
+    "webpack": "^5.88.2",
+    "webpack-cli": "^5.1.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "audio-streaming",
+    "websocket",
+    "music-platform",
+    "real-time",
+    "dnb"
+  ],
+  "author": "DNB1st Team",
+  "license": "MIT"
+}

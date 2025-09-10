@@ -386,14 +386,34 @@ class DatabaseOptimizer {
         })
       }
 
-      // Получаем жанлы из истории
-      const genreIds = userGenres.map(g => g.track.genre)
+      // Получаем жанры из истории с валидацией
+      const trackIds = userGenres.map(g => g.track).filter(id => typeof id === 'string' && id.length > 0)
+      
+      if (trackIds.length === 0) {
+        return this.prisma.track.findMany({
+          include: {
+            artist: { select: { id: true, username: true, avatar: true } },
+            _count: { select: { likes: true, playHistory: true } }
+          },
+          orderBy: { playCount: 'desc' },
+          take: limit
+        })
+      }
 
-      // Получаем рекомендации на основе жанров и артистов
+      // Получаем жанры безопасно
+      const tracks = await this.prisma.track.findMany({
+        where: { id: { in: trackIds } },
+        select: { genre: true }
+      })
+      
+      const genreIds = tracks.map(t => t.genre).filter(Boolean)
+
+      // Получаем рекомендации на основе жанров с валидацией
       const recommendations = await this.prisma.track.findMany({
         where: {
           genre: { in: genreIds },
-          artistId: { not: userId } // Исключаем треки самого пользователя
+          artistId: { not: userId },
+          isPublished: true // Только опубликованные треки
         },
         include: {
           artist: {

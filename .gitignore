@@ -58,7 +58,7 @@ prompt
 *.sqlite3
 
 # backup directories
-backup/
+backups/
 trash/
 
 # mobile app
@@ -91,4 +91,20 @@ logs/
 # test artifacts
 test-results/
 test-results/
-.vercel
+
+# Kubernetes
+.kube/
+
+# MCP servers
+.amazonq/
+.continue/
+
+# Virtual environments
+.venv/
+
+# Monitoring files
+monitoring.tar.gz
+monitoring.zip
+
+# Version files
+v1.0.2

@@ -7,7 +7,7 @@ import { AnchorProvider, Program, web3 } from '@coral-xyz/anchor'
 // Конфигурация
 const SOLANA_NETWORK = 'devnet'
 const RPC_URL = 'https://api.devnet.solana.com'
-const API_BASE_URL = 'http://localhost:3000'
+const API_BASE_URL = 'https://api.normaldance.com'
 
 // Интерфейсы
 export interface MobileTrack {
@@ -157,7 +157,7 @@ export class MobileService {
       }
 
       // Загрузка аудио из IPFS
-      const audioUrl = `https://ipfs.io/ipfs/${track.ipfsHash}`
+      const audioUrl = `https://gateway.pinata.cloud/ipfs/${track.ipfsHash}`
       const { sound: newSound } = await Audio.Sound.createAsync(
         { uri: audioUrl },
         { shouldPlay: true }
@@ -167,7 +167,8 @@ export class MobileService {
 
       // Обновление счетчика воспроизведений
       await fetch(`${API_BASE_URL}/api/tracks/${track.id}/play`, {
-        method: 'POST'
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
       })
 
     } catch (error) {

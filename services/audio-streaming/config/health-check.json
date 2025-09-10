@@ -1,0 +1,123 @@
+{
+  "monitoring": {
+    "services": {
+      "prometheus": {
+        "url": "http://localhost:9090",
+        "health_endpoint": "/-/healthy",
+        "metrics_endpoint": "/api/v1/query",
+        "expected_status": 200,
+        "timeout": 10
+      },
+      "grafana": {
+        "url": "http://localhost:3000",
+        "health_endpoint": "/api/health",
+        "dashboards_endpoint": "/api/search?type=dash-db",
+        "expected_status": 200,
+        "timeout": 10
+      },
+      "alertmanager": {
+        "url": "http://localhost:9093",
+        "health_endpoint": "/api/v1/status",
+        "alerts_endpoint": "/api/v1/alerts",
+        "expected_status": 200,
+        "timeout": 10
+      },
+      "redis": {
+        "url": "redis://localhost:6379",
+        "timeout": 5
+      },
+      "nginx": {
+        "url": "http://localhost:80",
+        "expected_status": 200,
+        "timeout": 10
+      }
+    },
+    "docker": {
+      "containers": [
+        "prometheus",
+        "grafana",
+        "alertmanager",
+        "redis",
+        "nginx"
+      ],
+      "prefix": "monitoring_"
+    },
+    "ssl": {
+      "domains": [
+        "dnb1st.ru",
+        "monitoring.dnb1st.ru"
+      ],
+      "warning_days": 30,
+      "critical_days": 7
+    },
+    "resources": {
+      "cpu": {
+        "warning_threshold": 80,
+        "critical_threshold": 90
+      },
+      "memory": {
+        "warning_threshold": 80,
+        "critical_threshold": 90
+      },
+      "disk": {
+        "warning_threshold": 80,
+        "critical_threshold": 90,
+        "mount_points": ["/", "/var/lib/docker", "/opt"]
+      }
+    },
+    "network": {
+      "endpoints": [
+        "8.8.8.8",
+        "1.1.1.1",
+        "google.com"
+      ],
+      "timeout": 3
+    },
+    "logs": {
+      "files": [
+        "/var/log/monitoring/prometheus.log",
+        "/var/log/monitoring/grafana.log",
+        "/var/log/monitoring/alertmanager.log"
+      ],
+      "error_patterns": ["error", "fatal", "panic", "critical"]
+    },
+    "processes": [
+      "dockerd",
+      "prometheus",
+      "grafana-server",
+      "alertmanager"
+    ]
+  },
+  "alerts": {
+    "email": {
+      "enabled": true,
+      "recipients": ["admin@dnb1st.ru"],
+      "smtp": {
+        "host": "localhost",
+        "port": 25
+      }
+    },
+    "slack": {
+      "enabled": false,
+      "webhook_url": "",
+      "channel": "#monitoring"
+    },
+    "webhook": {
+      "enabled": false,
+      "url": "",
+      "timeout": 10
+    }
+  },
+  "output": {
+    "format": "text",
+    "verbose": false,
+    "log_file": "/var/log/monitoring-health.log",
+    "max_log_size": "10MB",
+    "max_log_files": 5
+  },
+  "schedule": {
+    "interval": 300,
+    "max_retries": 3,
+    "retry_delay": 30
+  }
+}

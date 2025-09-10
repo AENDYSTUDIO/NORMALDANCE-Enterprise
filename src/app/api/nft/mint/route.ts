@@ -1,127 +1,153 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { z } from 'zod'
+import { Connection, PublicKey } from '@solana/web3.js'
+import { SPLTokenService } from '@/lib/spl-token-service'
+import { IPFSEnhancedService } from '@/lib/ipfs-enhanced-service'
+import rateLimit from '@/lib/rate-limit'
 
-// Validation schema for minting NFT
-const mintSchema = z.object({
-  nftId: z.string().min(1),
-  recipientAddress: z.string().min(1),
-  quantity: z.number().min(1).default(1),
+const limiter = rateLimit({
+  interval: 60 * 1000, // 1 minute
+  uniqueTokenPerInterval: 500,
 })
 
-// POST /api/nft/mint - Mint NFT to a specific address
 export async function POST(request: NextRequest) {
   try {
+    // Rate limiting
+    await limiter.check(request, 10, 'CACHE_TOKEN')
+
     const body = await request.json()
-    const { nftId, recipientAddress, quantity } = mintSchema.parse(body)
+    const {
+      name,
+      description,
+      imageUrl,
+      audioUrl,
+      attributes,
+      royaltyPercentage,
+      royaltyRecipients,
+      walletAddress,
+      collectionId
+    } = body
 
-    // Find the NFT
-    const nft = await db.nft.findUnique({
-      where: { id: nftId },
-      include: {
-        artist: true,
-      }
-    })
-
-    if (!nft) {
+    // Validate required fields
+    if (!name || !description || !walletAddress) {
       return NextResponse.json(
-        { error: 'NFT not found' },
-        { status: 404 }
-      )
-    }
-
-    // Check if NFT is published
-    if (!nft.isPublished) {
-      return NextResponse.json(
-        { error: 'NFT is not published for minting' },
+        { error: 'Missing required fields' },
         { status: 400 }
       )
     }
 
-    // Check if there's enough supply
-    const totalMinted = await db.nftOwner.count({
-      where: { nftId: nftId }
-    })
+    // Initialize Solana connection
+    const connection = new Connection(
+      process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com'
+    )
 
-    if (totalMinted + quantity > nft.supply) {
+    const splService = new SPLTokenService(connection)
+
+    // Prepare metadata
+    const metadata = {
+      name,
+      symbol: 'NDT',
+      description,
+      image: imageUrl,
+      animation_url: audioUrl,
+      external_url: `https://normaldance.com/nft/${Date.now()}`,
+      attributes: attributes || [],
+      properties: {
+        files: [
+          ...(imageUrl ? [{ uri: imageUrl, type: 'image/png' }] : []),
+          ...(audioUrl ? [{ uri: audioUrl, type: 'audio/mpeg' }] : [])
+        ],
+        category: 'audio' as const
+      }
+    }
+
+    // Configure royalties
+    const royaltyConfig = {
+      percentage: (royaltyPercentage || 5) / 100,
+      recipients: royaltyRecipients || [{ address: walletAddress, share: 100 }]
+    }
+
+    // Mint NFT
+    const result = await splService.mintMusicNFT(
+      metadata,
+      royaltyConfig,
+      collectionId ? new PublicKey(collectionId) : undefined
+    )
+
+    if (result.success) {
+      return NextResponse.json({
+        success: true,
+        mint: result.mint?.toBase58(),
+        metadata: result.metadata?.toBase58(),
+        uri: result.uri
+      })
+    } else {
       return NextResponse.json(
-        { error: 'Not enough supply available' },
+        { error: result.error },
+        { status: 500 }
+      )
+    }
+
+  } catch (error) {
+    console.error('Mint API error:', error)
+    
+    if (error instanceof Error && error.message === 'Rate limit exceeded') {
+      return NextResponse.json(
+        { error: 'Rate limit exceeded' },
+        { status: 429 }
+      )
+    }
+
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    )
+  }
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const mint = searchParams.get('mint')
+
+    if (!mint) {
+      return NextResponse.json(
+        { error: 'Mint address required' },
         { status: 400 }
       )
     }
 
-    // Simulate blockchain minting process
-    // In a real implementation, this would interact with Solana
-    const mintTransaction = {
-      signature: `mint_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      blockhash: `blockhash_${Date.now()}`,
-      slot: Math.floor(Date.now() / 1000),
-    }
+    const connection = new Connection(
+      process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com'
+    )
 
-    // Create NFT ownership records
-    const ownershipRecords: any[] = []
-    for (let i = 0; i < quantity; i++) {
-      const ownership = await db.nftOwner.create({
-        data: {
-          nftId: nftId,
-          ownerAddress: recipientAddress,
-          mintedAt: new Date(),
-          transactionSignature: mintTransaction.signature,
-          quantity: 1,
-        }
-      })
-      ownershipRecords.push(ownership)
-    }
-
-    // Update NFT mint count
-    await db.nft.update({
-      where: { id: nftId },
-      data: {
-        mintCount: { increment: quantity },
-        lastMintedAt: new Date(),
-      }
+    const splService = new SPLTokenService(connection)
+    
+    // Get NFT metadata
+    const nft = await splService.metaplex.nfts().findByMint({
+      mintAddress: new PublicKey(mint)
     })
-
-    // Award minting reward to artist (royalty)
-    const royaltyAmount = nft.price ? Math.floor((nft.price * (nft.royaltyPercentage / 100)) * quantity) : 0
-    if (royaltyAmount > 0) {
-      // Apply deflationary model for royalty calculation (2% burn)
-      const burnAmount = Math.floor(royaltyAmount * 0.02) // 2% burn
-      const royaltyAfterDeflation = royaltyAmount - burnAmount
-      
-      await db.reward.create({
-        data: {
-          userId: nft.artistId,
-          type: 'NFT',
-          amount: royaltyAfterDeflation,
-          reason: `NFT minting royalty: ${nft.title} (${quantity} units)`
-        }
-      })
-
-      // Update artist balance
-      await db.user.update({
-        where: { id: nft.artistId },
-        data: { balance: { increment: royaltyAfterDeflation } }
-      })
-    }
 
     return NextResponse.json({
-      message: 'NFT minted successfully',
-      transaction: mintTransaction,
-      ownershipRecords,
-      quantity,
+      success: true,
+      nft: {
+        mint: nft.address.toBase58(),
+        name: nft.name,
+        symbol: nft.symbol,
+        description: nft.json?.description,
+        image: nft.json?.image,
+        attributes: nft.json?.attributes,
+        creators: nft.creators.map(creator => ({
+          address: creator.address.toBase58(),
+          share: creator.share,
+          verified: creator.verified
+        }))
+      }
     })
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { error: 'Validation failed', details: error.errors },
-        { status: 400 }
-      )
-    }
 
-    console.error('Error minting NFT:', error)
+  } catch (error) {
+    console.error('Get NFT API error:', error)
     return NextResponse.json(
-      { error: 'Failed to mint NFT' },
+      { error: 'Failed to fetch NFT' },
       { status: 500 }
     )
   }

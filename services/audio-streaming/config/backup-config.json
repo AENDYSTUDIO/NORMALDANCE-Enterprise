@@ -1,0 +1,101 @@
+{
+  "backup": {
+    "enabled": true,
+    "schedule": "0 2 * * *",
+    "retention": {
+      "days": 30,
+      "weeks": 12,
+      "months": 12
+    },
+    "compression": true,
+    "encryption": {
+      "enabled": false,
+      "method": "gpg",
+      "key_id": ""
+    }
+  },
+  "sources": {
+    "config": {
+      "enabled": true,
+      "paths": [
+        "/etc/nginx/sites-available",
+        "/etc/systemd/system",
+        "/opt/audio-streaming/config"
+      ]
+    },
+    "logs": {
+      "enabled": true,
+      "paths": [
+        "/var/log/nginx",
+        "/var/log/syslog",
+        "/opt/audio-streaming/logs"
+      ],
+      "exclude": [
+        "*.tmp",
+        "*.log.*"
+      ]
+    },
+    "databases": {
+      "enabled": true,
+      "postgresql": {
+        "host": "localhost",
+        "port": 5432,
+        "databases": ["audio_streaming", "postgres"],
+        "user": "postgres",
+        "password_env": "POSTGRES_PASSWORD"
+      }
+    },
+    "docker": {
+      "enabled": true,
+      "volumes": [
+        "audio-streaming_data",
+        "audio-streaming_redis"
+      ],
+      "containers": [
+        "audio-streaming-app",
+        "audio-streaming-redis"
+      ]
+    }
+  },
+  "destinations": {
+    "local": {
+      "enabled": true,
+      "path": "/opt/backups/local",
+      "max_size_gb": 50
+    },
+    "remote": {
+      "enabled": false,
+      "s3": {
+        "bucket": "audio-streaming-backups",
+        "region": "us-east-1",
+        "access_key_env": "AWS_ACCESS_KEY_ID",
+        "secret_key_env": "AWS_SECRET_ACCESS_KEY"
+      },
+      "rsync": {
+        "host": "backup.example.com",
+        "user": "backup",
+        "path": "/backups/audio-streaming",
+        "ssh_key": "/home/audio/.ssh/backup_key"
+      }
+    }
+  },
+  "notifications": {
+    "enabled": true,
+    "on_success": true,
+    "on_failure": true,
+    "slack_webhook": "",
+    "email": "admin@dnb1st.ru"
+  },
+  "monitoring": {
+    "enabled": true,
+    "metrics": {
+      "backup_size": true,
+      "backup_duration": true,
+      "success_rate": true
+    },
+    "alerts": {
+      "failure_threshold": 3,
+      "size_threshold_gb": 10
+    }
+  }
+}

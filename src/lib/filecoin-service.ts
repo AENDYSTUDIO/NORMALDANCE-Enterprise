@@ -1,339 +1,547 @@
-import { fetch } from 'undici'
+import { Filecoin } from '@glif/filecoin-wallet-provider'
+import { CID } from 'multiformats/cid'
+import { createHash } from 'crypto'
 
-// Интерфейс для Filecoin сделки
+// Интерфейс для информации о сделке Filecoin
 export interface FilecoinDeal {
   dealId: string
-  proposalId: number
-  miner: string
+  minerAddress: string
+  status: 'pending' | 'active' | 'failed' | 'terminated'
   size: number
   duration: number
   price: string
-  status: 'active' | 'pending' | 'failed' | 'terminated'
-  createdAt: string
-  updatedAt: string
-  storageProvider?: string
+  createdAt: Date
+  updatedAt: Date
+  cid: string
 }
 
-// Интерфейс для расчета стоимости
-export interface StorageCost {
-  totalCost: string
-  costPerGBPerDay: string
-  estimatedFees: string
-  totalDuration: number
+// Интерфейс для информации о хранилище
+export interface StorageInfo {
+  totalSize: number
+  usedSize: number
+  availableSize: number
+  deals: FilecoinDeal[]
+  lastUpdated: Date
 }
 
-// Интерфейс для доступности файла
-export interface FileAvailability {
-  available: boolean
-  storageProviders: string[]
+// Интерфейс для конфигурации хранилища
+export interface StorageConfig {
+  minerAddress: string
+  defaultDuration: number // в секундах
+  maxFileSize: number // в байтах
   replicationFactor: number
-  lastChecked: string
+  pricePerGB: string
+  verifiedDeals: boolean
 }
 
-// Конфигурация Filecoin
-const FILECOIN_CONFIG = {
-  apiEndpoint: process.env.FILECOIN_API_ENDPOINT || 'https://api.filecoin.network/v1',
-  authToken: process.env.FILECOIN_AUTH_TOKEN || '',
-  defaultDuration: 365, // дней
-  minReplicationFactor: 3,
+// Интерфейс для прогресса загрузки
+export interface UploadProgress {
+  cid: string
+  progress: number // 0-100
+  stage: 'uploading' | 'sealing' | 'dealing' | 'completed' | 'failed'
+  speed: number // bytes per second
+  eta: number // estimated time in seconds
+  error?: string
 }
 
-// Filecoin сервис
+// Класс для работы с Filecoin хранилищем
 export class FilecoinService {
-  private apiEndpoint: string
-  private authToken: string
+  private filecoin: Filecoin
+  private config: StorageConfig
+  private activeUploads: Map<string, UploadProgress> = new Map()
 
-  constructor() {
-    this.apiEndpoint = FILECOIN_CONFIG.apiEndpoint
-    this.authToken = FILECOIN_CONFIG.authToken
+  constructor(config?: Partial<StorageConfig>) {
+    this.filecoin = new Filecoin({
+      network: process.env.FILECOIN_NETWORK || 'calibration',
+      apiEndpoint: process.env.FILECOIN_API_ENDPOINT || 'https://api.calibration.filfox.info/v1',
+      walletAddress: process.env.FILECOIN_WALLET_ADDRESS
+    })
+
+    this.config = {
+      minerAddress: config?.minerAddress || process.env.FILECOIN_MINER_ADDRESS || 'f0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      defaultDuration: config?.defaultDuration || 365 * 24 * 60 * 60, // 1 год
+      maxFileSize: config?.maxFileSize || 100 * 1024 * 1024 * 1024, // 100GB
+      replicationFactor: config?.replicationFactor || 1,
+      pricePerGB: config?.pricePerGB || '0.0000001',
+      verifiedDeals: config?.verifiedDeals ?? true
+    }
   }
 
-  // Создание Filecoin сделки
-  async createDeal(
-    ipfsCid: string,
+  // Основной метод загрузки файла в Filecoin
+  async uploadFile(
+    cid: string,
     options: {
-      sizeInBytes?: number
-      durationInDays?: number
-      minerAddresses?: string[]
-      pricePerGBPerDay?: number
+      duration?: number
+      price?: string
+      replicationFactor?: number
+      verified?: boolean
+      minerAddress?: string
     } = {}
   ): Promise<FilecoinDeal> {
+    const uploadId = this.generateUploadId()
+    const progress: UploadProgress = {
+      cid,
+      progress: 0,
+      stage: 'uploading',
+      speed: 0,
+      eta: 0
+    }
+    
+    this.activeUploads.set(uploadId, progress)
+
     try {
-      console.log(`Creating Filecoin deal for IPFS CID: ${ipfsCid}`)
-      
-      const {
-        sizeInBytes = 100 * 1024 * 1024, // 100MB по умолчанию
-        durationInDays = FILECOIN_CONFIG.defaultDuration,
-        minerAddresses = [],
-        pricePerGBPerDay = 0.0001, // $0.0001 за GB в день
-      } = options
+      const deal = await this.createDeal(cid, {
+        duration: options.duration || this.config.defaultDuration,
+        price: options.price || this.calculatePrice(cid),
+        replicationFactor: options.replicationFactor || this.config.replicationFactor,
+        verified: options.verified ?? this.config.verifiedDeals,
+        minerAddress: options.minerAddress || this.config.minerAddress
+      })
 
-      // Расчет общей стоимости
-      const sizeInGB = sizeInBytes / (1024 * 1024 * 1024)
-      const totalCost = (sizeInGB * pricePerGBPerDay * durationInDays).toFixed(8)
+      progress.progress = 100
+      progress.stage = 'completed'
+      progress.eta = 0
 
-      // Если не указаны майнеры, получаем список доступных
-      let selectedMiners = minerAddresses
-      if (selectedMiners.length === 0) {
-        const availableMiners = await this.getAvailableMiners(sizeInGB)
-        selectedMiners = availableMiners.slice(0, 3) // Берем первых 3 майнера
-      }
+      setTimeout(() => {
+        this.activeUploads.delete(uploadId)
+      }, 5000)
 
-      if (selectedMiners.length === 0) {
-        throw new Error('No available storage providers found')
-      }
-
-      // Создаем сделку с первым доступным майнером
-      const miner = selectedMiners[0]
-      
-      // Здесь должна быть реальная интеграция с Filecoin API
-      // Пока возвращаем симулированный ответ
-      const deal: FilecoinDeal = {
-        dealId: `deal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        proposalId: Date.now(),
-        miner,
-        size: sizeInBytes,
-        duration: durationInDays,
-        price: totalCost,
-        status: 'pending',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        storageProvider: miner,
-      }
-
-      console.log(`Filecoin deal created: ${deal.dealId}`)
       return deal
     } catch (error) {
-      console.error('Failed to create Filecoin deal:', error)
+      progress.stage = 'failed'
+      progress.error = error instanceof Error ? error.message : 'Unknown error'
+      
+      setTimeout(() => {
+        this.activeUploads.delete(uploadId)
+      }, 10000)
+
+      throw error
+    }
+  }
+
+  // Создание сделки Filecoin
+  private async createDeal(
+    cid: string,
+    options: {
+      duration: number
+      price: string
+      replicationFactor: number
+      verified: boolean
+      minerAddress: string
+    }
+  ): Promise<FilecoinDeal> {
+    try {
+      // Создание сделки
+      const deal = await this.filecoin.client.Deals.create(
+        options.minerAddress,
+        cid,
+        {
+          duration: options.duration,
+          price: options.price,
+          verified: options.verified
+        }
+      )
+
+      return {
+        dealId: deal.DealID,
+        minerAddress: options.minerAddress,
+        status: 'pending',
+        size: await this.estimateFileSize(cid),
+        duration: options.duration,
+        price: options.price,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        cid
+      }
+    } catch (error) {
       throw new Error(`Failed to create Filecoin deal: ${error}`)
     }
   }
 
-  // Расчет стоимости хранения
-  async calculateStorageCost(
-    sizeInBytes: number,
-    durationInDays: number
-  ): Promise<StorageCost> {
-    try {
-      console.log(`Calculating storage cost for ${sizeInBytes} bytes, ${durationInDays} days`)
-      
-      const sizeInGB = sizeInBytes / (1024 * 1024 * 1024)
-      const costPerGBPerDay = 0.0001 // $0.0001 за GB в день
-      const totalCost = (sizeInGB * costPerGBPerDay * durationInDays).toFixed(8)
-      
-      // Оценка дополнительных комиссий
-      const estimatedFees = (parseFloat(totalCost) * 0.1).toFixed(8) // 10% комиссии
-      
-      const cost: StorageCost = {
-        totalCost,
-        costPerGBPerDay: costPerGBPerDay.toFixed(8),
-        estimatedFees,
-        totalDuration: durationInDays,
-      }
-
-      console.log(`Storage cost calculated: $${cost.totalCost}`)
-      return cost
-    } catch (error) {
-      console.error('Failed to calculate storage cost:', error)
-      throw new Error(`Failed to calculate storage cost: ${error}`)
-    }
+  // Расчет цены за хранение
+  private calculatePrice(cid: string): string {
+    // Здесь можно реализовать более сложную логику ценообразования
+    return this.config.pricePerGB
   }
 
-  // Проверка доступности файла
-  async checkFileAvailability(ipfsCid: string): Promise<FileAvailability> {
+  // Оценка размера файла по CID
+  private async estimateFileSize(cid: string): Promise<number> {
     try {
-      console.log(`Checking file availability for IPFS CID: ${ipfsCid}`)
-      
-      // Проверяем доступность на IPFS шлюзах
-      const ipfsGateways = [
-        'https://ipfs.io/ipfs/',
-        'https://gateway.pinata.cloud/ipfs/',
-        'https://cloudflare-ipfs.com/ipfs/',
-      ]
-      
-      const availableGateways: string[] = []
-      
-      for (const gateway of ipfsGateways) {
-        try {
-          const url = `${gateway}${ipfsCid}`
-          const response = await fetch(url, { method: 'HEAD', timeout: 5000 })
-          
-          if (response.ok) {
-            availableGateways.push(gateway)
-          }
-        } catch (error) {
-          console.warn(`Gateway ${gateway} not available:`, error)
-        }
-      }
-      
-      // Симулируем проверку Filecoin доступности
-      const filecoinAvailable = availableGateways.length >= FILECOIN_CONFIG.minReplicationFactor
-      
-      const availability: FileAvailability = {
-        available: filecoinAvailable,
-        storageProviders: availableGateways,
-        replicationFactor: availableGateways.length,
-        lastChecked: new Date().toISOString(),
-      }
-
-      console.log(`File availability checked: ${availability.available}`)
-      return availability
-    } catch (error) {
-      console.error('Failed to check file availability:', error)
-      throw new Error(`Failed to check file availability: ${error}`)
+      // Здесь можно запросить информацию о файле из IPFS
+      // Для простоты возвращаем заглушку
+      return 1024 * 1024 // 1MB
+    } catch {
+      return 1024 * 1024 // 1MB fallback
     }
   }
 
   // Получение информации о сделке
   async getDeal(dealId: string): Promise<FilecoinDeal | null> {
     try {
-      console.log(`Getting deal information: ${dealId}`)
+      const deal = await this.filecoin.client.Deals.get(dealId)
       
-      // Здесь должна быть реальная интеграция с Filecoin API
-      // Пока возвращаем симулированный ответ
-      const deal: FilecoinDeal = {
+      return {
         dealId,
-        proposalId: Date.now(),
-        miner: 'f01234',
-        size: 100 * 1024 * 1024,
-        duration: 365,
-        price: '36.50',
-        status: 'active',
-        createdAt: new Date(Date.now() - 86400000).toISOString(), // 1 день назад
-        updatedAt: new Date().toISOString(),
-        storageProvider: 'storage-provider-1',
+        minerAddress: deal.Miner,
+        status: this.mapDealStatus(deal.State),
+        size: deal.Size,
+        duration: deal.Duration,
+        price: deal.Price,
+        createdAt: new Date(deal.StartEpoch * 1000),
+        updatedAt: new Date(),
+        cid: deal.PayloadCID
       }
-
-      console.log(`Deal information retrieved: ${deal.dealId}`)
-      return deal
-    } catch (error) {
-      console.error('Failed to get deal information:', error)
+    } catch {
       return null
     }
   }
 
-  // Получение списка активных сделок
-  async listActiveDeals(): Promise<FilecoinDeal[]> {
+  // Получение всех сделок пользователя
+  async getAllDeals(): Promise<FilecoinDeal[]> {
     try {
-      console.log('Listing active deals...')
+      const deals = await this.filecoin.client.Deals.list()
       
-      // Здесь должна быть реальная интеграция с Filecoin API
-      // Пока возвращаем симулированный ответ
-      const deals: FilecoinDeal[] = [
-        {
-          dealId: 'deal_123456789',
-          proposalId: 123456789,
-          miner: 'f01234',
-          size: 100 * 1024 * 1024,
-          duration: 365,
-          price: '36.50',
-          status: 'active',
-          createdAt: new Date(Date.now() - 86400000).toISOString(),
-          updatedAt: new Date().toISOString(),
-          storageProvider: 'storage-provider-1',
-        },
-        {
-          dealId: 'deal_987654321',
-          proposalId: 987654321,
-          miner: 'f05678',
-          size: 200 * 1024 * 1024,
-          duration: 180,
-          price: '14.40',
-          status: 'pending',
-          createdAt: new Date(Date.now() - 3600000).toISOString(),
-          updatedAt: new Date().toISOString(),
-          storageProvider: 'storage-provider-2',
-        },
-      ]
-
-      console.log(`Found ${deals.length} active deals`)
-      return deals
-    } catch (error) {
-      console.error('Failed to list active deals:', error)
-      throw new Error(`Failed to list active deals: ${error}`)
+      return deals.map(deal => ({
+        dealId: deal.DealID,
+        minerAddress: deal.Miner,
+        status: this.mapDealStatus(deal.State),
+        size: deal.Size,
+        duration: deal.Duration,
+        price: deal.Price,
+        createdAt: new Date(deal.StartEpoch * 1000),
+        updatedAt: new Date(),
+        cid: deal.PayloadCID
+      }))
+    } catch {
+      return []
     }
   }
 
   // Отмена сделки
   async cancelDeal(dealId: string): Promise<boolean> {
     try {
-      console.log(`Canceling deal: ${dealId}`)
-      
-      // Здесь должна быть реальная интеграция с Filecoin API
-      // Пока симулируем успешное завершение
-      console.log(`Deal canceled successfully: ${dealId}`)
+      await this.filecoin.client.Deals.terminate(dealId)
       return true
-    } catch (error) {
-      console.error('Failed to cancel deal:', error)
+    } catch {
       return false
-    }
-  }
-
-  // Получение списка доступных майнеров
-  private async getAvailableMiners(requiredSizeGB: number): Promise<string[]> {
-    try {
-      console.log(`Getting available miners for ${requiredSizeGB}GB`)
-      
-      // Здесь должна быть реальная интеграция с Filecoin API
-      // Пока возвращаем симулированный список
-      const miners = [
-        'f01234', // miner1
-        'f05678', // miner2
-        'f09abc', // miner3
-        'f0def0', // miner4
-        'f12345', // miner5
-      ]
-      
-      console.log(`Found ${miners.length} available miners`)
-      return miners
-    } catch (error) {
-      console.error('Failed to get available miners:', error)
-      return []
-    }
-  }
-
-  // Мониторинг состояния сделок
-  async monitorDeals(): Promise<{
-    activeDeals: number
-    pendingDeals: number
-    failedDeals: number
-    totalStorage: number
-  }> {
-    try {
-      console.log('Monitoring deals...')
-      
-      const activeDeals = await this.listActiveDeals()
-      
-      const stats = {
-        activeDeals: activeDeals.filter(d => d.status === 'active').length,
-        pendingDeals: activeDeals.filter(d => d.status === 'pending').length,
-        failedDeals: activeDeals.filter(d => d.status === 'failed').length,
-        totalStorage: activeDeals.reduce((sum, deal) => sum + deal.size, 0),
-      }
-
-      console.log('Deal monitoring completed')
-      return stats
-    } catch (error) {
-      console.error('Failed to monitor deals:', error)
-      throw new Error(`Failed to monitor deals: ${error}`)
     }
   }
 
   // Обновление статуса сделки
-  async updateDealStatus(dealId: string, newStatus: FilecoinDeal['status']): Promise<boolean> {
+  async updateDealStatus(dealId: string): Promise<FilecoinDeal | null> {
+    const deal = await this.getDeal(dealId)
+    if (!deal) return null
+
+    // Проверяем, изменился ли статус
+    const currentDeal = await this.getDeal(dealId)
+    if (currentDeal && currentDeal.status !== deal.status) {
+      return currentDeal
+    }
+
+    return deal
+  }
+
+  // Получение информации о хранилище
+  async getStorageInfo(): Promise<StorageInfo> {
+    const deals = await this.getAllDeals()
+    const totalSize = deals.reduce((sum, deal) => sum + deal.size, 0)
+    
+    return {
+      totalSize: this.config.maxFileSize,
+      usedSize: totalSize,
+      availableSize: this.config.maxFileSize - totalSize,
+      deals,
+      lastUpdated: new Date()
+    }
+  }
+
+  // Проверка доступности файла
+  async checkFileAvailability(cid: string): Promise<{
+    available: boolean
+    deals: FilecoinDeal[]
+    fastestDeal?: FilecoinDeal
+  }> {
+    const deals = await this.getAllDeals()
+    const fileDeals = deals.filter(deal => deal.cid === cid)
+    
+    if (fileDeals.length === 0) {
+      return {
+        available: false,
+        deals: []
+      }
+    }
+
+    // Находим самую быструю сделку
+    const activeDeals = fileDeals.filter(deal => deal.status === 'active')
+    const fastestDeal = activeDeals.length > 0 
+      ? activeDeals.reduce((fastest, current) => 
+          current.createdAt < fastest.createdAt ? current : fastest
+        )
+      : undefined
+
+    return {
+      available: activeDeals.length > 0,
+      deals: fileDeals,
+      fastestDeal
+    }
+  }
+
+  // Восстановление недоступного файла
+  async restoreFile(cid: string): Promise<{
+    success: boolean
+    restoredDeals: FilecoinDeal[]
+    actions: string[]
+  }> {
+    const actions: string[] = []
+    const restoredDeals: FilecoinDeal[] = []
+
     try {
-      console.log(`Updating deal status: ${dealId} -> ${newStatus}`)
+      const availability = await this.checkFileAvailability(cid)
       
-      // Здесь должна быть реальная интеграция с Filecoin API
-      // Пока симулируем успешное обновление
-      console.log(`Deal status updated successfully: ${dealId}`)
-      return true
+      if (!availability.available) {
+        actions.push('File not available on Filecoin')
+        
+        // Создаем новую сделку
+        const deal = await this.uploadFile(cid, {
+          duration: this.config.defaultDuration,
+          price: this.calculatePrice(cid),
+          replicationFactor: this.config.replicationFactor,
+          verified: this.config.verifiedDeals
+        })
+        
+        restoredDeals.push(deal)
+        actions.push(`Created new deal: ${deal.dealId}`)
+      } else {
+        actions.push('File already available')
+      }
+
+      return {
+        success: true,
+        restoredDeals,
+        actions
+      }
     } catch (error) {
-      console.error('Failed to update deal status:', error)
-      return false
+      return {
+        success: false,
+        restoredDeals: [],
+        actions: [`Failed to restore file: ${error}`]
+      }
+    }
+  }
+
+  // Мониторинг сделок
+  async monitorDeals(): Promise<{
+    activeDeals: FilecoinDeal[]
+    pendingDeals: FilecoinDeal[]
+    failedDeals: FilecoinDeal[]
+    totalSize: number
+  }> {
+    const deals = await this.getAllDeals()
+    
+    const activeDeals = deals.filter(deal => deal.status === 'active')
+    const pendingDeals = deals.filter(deal => deal.status === 'pending')
+    const failedDeals = deals.filter(deal => deal.status === 'failed')
+    
+    const totalSize = deals.reduce((sum, deal) => sum + deal.size, 0)
+
+    return {
+      activeDeals,
+      pendingDeals,
+      failedDeals,
+      totalSize
+    }
+  }
+
+  // Расчет стоимости хранения
+  calculateStorageCost(
+    sizeInGB: number,
+    durationInDays: number,
+    pricePerGB: string = this.config.pricePerGB
+  ): string {
+    const pricePerDay = parseFloat(pricePerGB) / 365
+    const totalCost = sizeInGB * durationInDays * pricePerDay
+    
+    return totalCost.toFixed(9)
+  }
+
+  // Получение прогресса загрузки
+  getUploadProgress(cid: string): UploadProgress | null {
+    for (const [uploadId, progress] of this.activeUploads) {
+      if (progress.cid === cid) {
+        return progress
+      }
+    }
+    return null
+  }
+
+  // Получение всех активных загрузок
+  getActiveUploads(): UploadProgress[] {
+    return Array.from(this.activeUploads.values())
+  }
+
+  // Отмена загрузки
+  cancelUpload(cid: string): boolean {
+    for (const [uploadId, progress] of this.activeUploads) {
+      if (progress.cid === cid) {
+        progress.stage = 'failed'
+        progress.error = 'Upload cancelled by user'
+        this.activeUploads.delete(uploadId)
+        return true
+      }
+    }
+    return false
+  }
+
+  // Генерация уникального ID для загрузки
+  private generateUploadId(): string {
+    return `upload_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+  }
+
+  // Отображение статуса сделки
+  private mapDealStatus(status: string): FilecoinDeal['status'] {
+    switch (status) {
+      case 'StorageDealActive':
+        return 'active'
+      case 'StorageDealAccepted':
+      case 'StorageDealPublished':
+        return 'pending'
+      case 'StorageDealFailed':
+        return 'failed'
+      case 'StorageDealTerminated':
+        return 'terminated'
+      default:
+        return 'pending'
+    }
+  }
+
+  // Проверка здоровья файлов
+  async checkFileHealth(cid: string): Promise<{
+    healthy: boolean
+    deals: FilecoinDeal[]
+    issues: string[]
+    recommendations: string[]
+  }> {
+    const issues: string[] = []
+    const recommendations: string[] = []
+    const deals = await this.getAllDeals()
+    const fileDeals = deals.filter(deal => deal.cid === cid)
+    
+    if (fileDeals.length === 0) {
+      issues.push('No Filecoin deals found for this file')
+      recommendations.push('Create a new Filecoin deal for this file')
+    }
+
+    const activeDeals = fileDeals.filter(deal => deal.status === 'active')
+    if (activeDeals.length === 0) {
+      issues.push('No active deals found')
+      recommendations.push('Create new active deals')
+    }
+
+    // Проверка репликации
+    if (activeDeals.length < this.config.replicationFactor) {
+      issues.push(`Insufficient replication factor: ${activeDeals.length}/${this.config.replicationFactor}`)
+      recommendations.push(`Create additional deals to meet replication factor`)
+    }
+
+    // Проверка срока действия сделок
+    const expiringSoon = activeDeals.filter(deal => {
+      const expiryDate = new Date(deal.createdAt.getTime() + deal.duration * 1000)
+      const daysUntilExpiry = (expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+      return daysUntilExpiry < 30
+    })
+
+    if (expiringSoon.length > 0) {
+      issues.push(`${expiringSoon.length} deals expiring soon`)
+      recommendations.push('Renew expiring deals')
+    }
+
+    return {
+      healthy: issues.length === 0,
+      deals: fileDeals,
+      issues,
+      recommendations
+    }
+  }
+
+  // Автоматическое продление сделок
+  async autoRenewDeals(): Promise<{
+    renewedDeals: FilecoinDeal[]
+    failedDeals: string[]
+    recommendations: string[]
+  }> {
+    const renewedDeals: FilecoinDeal[] = []
+    const failedDeals: string[] = []
+    const recommendations: string[] = []
+
+    try {
+      const deals = await this.getAllDeals()
+      const activeDeals = deals.filter(deal => deal.status === 'active')
+      
+      for (const deal of activeDeals) {
+        const expiryDate = new Date(deal.createdAt.getTime() + deal.duration * 1000)
+        const daysUntilExpiry = (expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+        
+        if (daysUntilExpiry < 7) { // Продление за неделю до истечения
+          try {
+            const newDeal = await this.uploadFile(deal.cid, {
+              duration: this.config.defaultDuration,
+              price: this.calculatePrice(deal.cid),
+              replicationFactor: this.config.replicationFactor,
+              verified: this.config.verifiedDeals
+            })
+            renewedDeals.push(newDeal)
+          } catch (error) {
+            failedDeals.push(deal.dealId)
+            recommendations.push(`Failed to renew deal ${deal.dealId}: ${error}`)
+          }
+        }
+      }
+
+      return {
+        renewedDeals,
+        failedDeals,
+        recommendations
+      }
+    } catch (error) {
+      return {
+        renewedDeals: [],
+        failedDeals: [],
+        recommendations: [`Auto-renewal failed: ${error}`]
+      }
     }
   }
 }
 
-// Создание экземпляра сервиса
+// Создаем экземпляр сервиса
 export const filecoinService = new FilecoinService()
+
+// Экспортируем полезные функции
+export const uploadFileToStorage = (cid: string, options?: any) => 
+  filecoinService.uploadFile(cid, options)
+
+export const getFilecoinDeal = (dealId: string) => 
+  filecoinService.getDeal(dealId)
+
+export const getAllFilecoinDeals = () => 
+  filecoinService.getAllDeals()
+
+export const checkFilecoinAvailability = (cid: string) => 
+  filecoinService.checkFileAvailability(cid)
+
+export const restoreFilecoinFile = (cid: string) => 
+  filecoinService.restoreFile(cid)
+
+export const getStorageInfo = () => 
+  filecoinService.getStorageInfo()
+
+export const monitorFilecoinDeals = () => 
+  filecoinService.monitorDeals()
+
+export const calculateStorageCost = (sizeInGB: number, durationInDays: number, pricePerGB?: string) => 
+  filecoinService.calculateStorageCost(sizeInGB, durationInDays, pricePerGB)
+
+export const checkFilecoinHealth = (cid: string) => 
+  filecoinService.checkFileHealth(cid)
+
+export const autoRenewFilecoinDeals = () => 
+  filecoinService.autoRenewDeals()

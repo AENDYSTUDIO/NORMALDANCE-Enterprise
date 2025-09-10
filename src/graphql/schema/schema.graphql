@@ -1,0 +1,665 @@
+# Скаляры
+scalar DateTime
+scalar Json
+scalar Upload
+
+# Основные типы
+type User {
+  id: ID!
+  email: String!
+  username: String!
+  displayName: String
+  bio: String
+  avatar: String
+  banner: String
+  wallet: String
+  level: UserLevel!
+  role: UserRole!
+  isArtist: Boolean!
+  isVerified: Boolean!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  tracks: [Track!]!
+  playlists: [Playlist!]!
+  nfts: [NFT!]!
+  stakes: [Stake!]!
+  rewards: [Reward!]!
+  followers: [User!]!
+  following: [User!]!
+  totalPlays: Int!
+  totalLikes: Int!
+}
+
+type Track {
+  id: ID!
+  title: String!
+  artistName: String!
+  genre: String!
+  duration: Int!
+  audioUrl: String!
+  coverUrl: String
+  ipfsHash: String!
+  metadata: Json!
+  likeCount: Int!
+  playCount: Int!
+  price: Float
+  isExplicit: Boolean!
+  isPublished: Boolean!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  artist: User!
+  likes: [Like!]!
+  comments: [Comment!]!
+  playHistory: [PlayHistory!]!
+  nfts: [NFT!]!
+  playlistTracks: [PlaylistTrack!]!
+}
+
+type NFT {
+  id: ID!
+  name: String!
+  description: String
+  type: NFTType!
+  metadata: Json!
+  imageUrl: String
+  price: Float
+  status: NFTStatus!
+  tokenId: String!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  track: Track
+  owner: User!
+  purchases: [Purchase!]!
+  stakes: [Stake!]!
+  totalPurchases: Int!
+  totalStakes: Int!
+  totalVolume: Float!
+  royaltyPercentage: Int!
+}
+
+type Playlist {
+  id: ID!
+  name: String!
+  description: String
+  coverUrl: String
+  isPublic: Boolean!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  user: User!
+  tracks: [PlaylistTrack!]!
+  trackCount: Int!
+  playCount: Int!
+}
+
+type PlaylistTrack {
+  id: ID!
+  position: Int!
+  addedAt: DateTime!
+  track: Track!
+  playlist: Playlist!
+}
+
+type Stake {
+  id: ID!
+  amount: Float!
+  rewardRate: Float!
+  earned: Float!
+  status: StakeStatus!
+  startDate: DateTime!
+  endDate: DateTime
+  apy: Float!
+  rewards: [Reward!]!
+  user: User!
+  token: Token!
+}
+
+type Token {
+  id: ID!
+  name: String!
+  symbol: String!
+  type: TokenType!
+  decimals: Int!
+  totalSupply: Float!
+  metadata: Json!
+  creatorAddress: String!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  nfts: [NFT!]!
+  stakes: [Stake!]!
+}
+
+type Reward {
+  id: ID!
+  amount: Float!
+  type: RewardType!
+  reason: String
+  status: RewardStatus!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  user: User!
+  stake: Stake
+}
+
+type Like {
+  id: ID!
+  createdAt: DateTime!
+  user: User!
+  track: Track!
+}
+
+type Comment {
+  id: ID!
+  content: String!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  user: User!
+  track: Track!
+}
+
+type PlayHistory {
+  id: ID!
+  playedAt: DateTime!
+  user: User!
+  track: Track!
+  duration: Int!
+  completion: Float!
+}
+
+type Purchase {
+  id: ID!
+  price: Float!
+  createdAt: DateTime!
+  buyer: User!
+  nft: NFT!
+}
+
+# Web3 типы
+type Wallet {
+  address: String!
+  balance: Float!
+  publicKey: PublicKey!
+}
+
+type TransactionResult {
+  signature: String!
+  success: Boolean!
+  error: String
+}
+
+type MintResult {
+  signature: String!
+  success: Boolean!
+  error: String
+  tokenId: String
+}
+
+type StakeResult {
+  signature: String!
+  success: Boolean!
+  error: String
+  stakeId: String
+}
+
+type ProgramResponse {
+  success: Boolean!
+  data: Json
+  error: String
+}
+
+type DeflationaryStats {
+  totalTokens: Int!
+  totalSupply: Float!
+  totalBurned: Float!
+  burnRate: Float!
+  averageAPY: Float!
+}
+
+# Запросы (Queries)
+type Query {
+  # Пользователи
+  user(id: ID!): User
+  users(first: Int = 50, after: String, filter: UserFilter): UserConnection!
+  currentUser: User
+  userStats(id: ID!): UserStats
+  
+  # Треки
+  track(id: ID!): Track
+  tracks(first: Int = 50, after: String, filter: TrackFilter, sort: TrackSort): TrackConnection!
+  recommendedTracks(userId: ID, limit: Int = 10): [Track!]!
+  trendingTracks(limit: Int = 10): [Track!]!
+  searchTracks(query: String!, first: Int = 50): TrackConnection!
+  
+  # NFT
+  nft(id: ID!): NFT
+  nfts(first: Int = 50, after: String, filter: NFTFilter, sort: NFTSort): NFTConnection!
+  userNFTs(userId: ID!): [NFT!]!
+  trackNFTs(trackId: ID!): [NFT!]!
+  
+  # Стейкинг
+  stake(id: ID!): Stake
+  stakes(userId: ID!, first: Int = 50, after: String): StakeConnection!
+  activeStakes(userId: ID!): [Stake!]!
+  completedStakes(userId: ID!): [Stake!]!
+  
+  # Плейлисты
+  playlist(id: ID!): Playlist
+  playlists(first: Int = 50, after: String, filter: PlaylistFilter): PlaylistConnection!
+  userPlaylists(userId: ID!): [Playlist!]!
+  
+  # Токены
+  token(id: ID!): Token
+  tokens(first: Int = 50, after: String, filter: TokenFilter): TokenConnection!
+  
+  # Вознаграждения
+  rewards(userId: ID!, first: Int = 50, after: String): RewardConnection!
+  
+  # Web3
+  walletBalance(address: String!): Float!
+  walletTransactions(address: String!, limit: Int = 10): [Transaction!]!
+  tokenBalance(walletAddress: String!, mintAddress: String!): Float!
+  programState(programId: String!): ProgramResponse!
+  nftMetadata(mintAddress: String!): Json!
+  stakingPoolInfo(poolAddress: String!): Json!
+  deflationaryStats: DeflationaryStats!
+}
+
+# Мутации (Mutations)
+type Mutation {
+  # Пользователи
+  createUser(input: CreateUserInput!): User!
+  updateUser(id: ID!, input: UpdateUserInput!): User!
+  deleteUser(id: ID!): User!
+  followUser(userId: ID!): User!
+  unfollowUser(userId: ID!): User!
+  
+  # Треки
+  createTrack(input: CreateTrackInput!): Track!
+  updateTrack(id: ID!, input: UpdateTrackInput!): Track!
+  deleteTrack(id: ID!): Track!
+  likeTrack(trackId: ID!): Track!
+  unlikeTrack(trackId: ID!): Track!
+  
+  # NFT
+  mintNFT(input: MintNFTInput!): MintResult!
+  purchaseNFT(nftId: ID!): TransactionResult!
+  sellNFT(nftId: ID!, price: Float!): NFT!
+  transferNFT(nftId: ID!, toAddress: String!): TransactionResult!
+  
+  # Стейкинг
+  stakeTokens(input: StakeTokensInput!): StakeResult!
+  unstakeTokens(stakeId: ID!): TransactionResult!
+  claimRewards(stakeId: ID!): TransactionResult!
+  
+  # Плейлисты
+  createPlaylist(input: CreatePlaylistInput!): Playlist!
+  updatePlaylist(id: ID!, input: UpdatePlaylistInput!): Playlist!
+  deletePlaylist(id: ID!): Playlist!
+  addTrackToPlaylist(playlistId: ID!, trackId: ID!): PlaylistTrack!
+  removeTrackFromPlaylist(playlistId: ID!, trackId: ID!): PlaylistTrack!
+  
+  # Токены
+  createDeflationaryToken(input: CreateDeflationaryTokenInput!): Json!
+  transferToken(input: TransferTokenInput!): TransactionResult!
+  
+  # Web3
+  transferSol(input: TransferSolInput!): TransactionResult!
+  transferToken(input: TransferTokenInput!): TransactionResult!
+  createDeflationaryToken(input: CreateDeflationaryTokenInput!): Json!
+}
+
+# Подписки (Subscriptions)
+type Subscription {
+  trackCreated: Track!
+  trackUpdated: Track!
+  trackDeleted: Track!
+  nftMinted: NFT!
+  nftPurchased: NFT!
+  stakeCreated: Stake!
+  stakeUpdated: Stake!
+  stakeCompleted: Stake!
+  rewardClaimed: Reward!
+  playlistCreated: Playlist!
+  playlistUpdated: Playlist!
+  playlistDeleted: Playlist!
+  userFollowed: User!
+  userUnfollowed: User!
+}
+
+# Типы соединений для пагинации
+type UserConnection {
+  edges: [UserEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type UserEdge {
+  node: User!
+  cursor: String!
+}
+
+type TrackConnection {
+  edges: [TrackEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type TrackEdge {
+  node: Track!
+  cursor: String!
+}
+
+type NFTConnection {
+  edges: [NFTEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type NFTEdge {
+  node: NFT!
+  cursor: String!
+}
+
+type StakeConnection {
+  edges: [StakeEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type StakeEdge {
+  node: Stake!
+  cursor: String!
+}
+
+type PlaylistConnection {
+  edges: [PlaylistEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type PlaylistEdge {
+  node: Playlist!
+  cursor: String!
+}
+
+type TokenConnection {
+  edges: [TokenEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type TokenEdge {
+  node: Token!
+  cursor: String!
+}
+
+type RewardConnection {
+  edges: [RewardEdge!]!
+  pageInfo: PageInfo!
+  totalCount: Int!
+}
+
+type RewardEdge {
+  node: Reward!
+  cursor: String!
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
+
+# Типы для фильтров и сортировки
+input UserFilter {
+  role: UserRole
+  level: UserLevel
+  isArtist: Boolean
+  search: String
+}
+
+input TrackFilter {
+  genre: String
+  artistId: ID
+  isPublished: Boolean
+  price_min: Float
+  price_max: Float
+  search: String
+}
+
+input TrackSort {
+  field: TrackSortField!
+  direction: SortDirection!
+}
+
+input NFTFilter {
+  type: NFTType
+  status: NFTStatus
+  ownerId: ID
+  trackId: ID
+  price_min: Float
+  price_max: Float
+  search: String
+}
+
+input NFTSort {
+  field: NFTSortField!
+  direction: SortDirection!
+}
+
+input PlaylistFilter {
+  userId: ID
+  isPublic: Boolean
+  search: String
+}
+
+input TokenFilter {
+  type: TokenType
+  creatorAddress: String
+  search: String
+}
+
+input UserStats {
+  totalTracks: Int!
+  totalPlays: Int!
+  totalLikes: Int!
+  totalFollowers: Int!
+  totalEarnings: Float!
+}
+
+# Входные данные для мутаций
+input CreateUserInput {
+  email: String!
+  username: String!
+  password: String!
+  displayName: String
+  bio: String
+  wallet: String
+}
+
+input UpdateUserInput {
+  displayName: String
+  bio: String
+  avatar: String
+  banner: String
+  wallet: String
+}
+
+input CreateTrackInput {
+  title: String!
+  artistId: ID!
+  genre: String!
+  duration: Int!
+  audioUrl: String!
+  coverUrl: String
+  metadata: Json!
+  price: Float
+  isExplicit: Boolean!
+}
+
+input UpdateTrackInput {
+  title: String
+  genre: String
+  duration: Int
+  audioUrl: String
+  coverUrl: String
+  metadata: Json
+  price: Float
+  isExplicit: Boolean
+  isPublished: Boolean
+}
+
+input MintNFTInput {
+  creatorAddress: String!
+  metadata: Json!
+  royaltyPercentage: Int!
+}
+
+input StakeTokensInput {
+  walletAddress: String!
+  tokenAddress: String!
+  amount: Float!
+  duration: Int!
+}
+
+input CreatePlaylistInput {
+  name: String!
+  description: String
+  coverUrl: String
+  isPublic: Boolean!
+  trackIds: [ID!]!
+}
+
+input UpdatePlaylistInput {
+  name: String
+  description: String
+  coverUrl: String
+  isPublic: Boolean
+}
+
+input TransferTokenInput {
+  fromAddress: String!
+  toAddress: String!
+  mintAddress: String!
+  amount: Float!
+}
+
+input TransferSolInput {
+  fromAddress: String!
+  toAddress: String!
+  amount: Float!
+}
+
+input CreateDeflationaryTokenInput {
+  name: String!
+  symbol: String!
+  initialSupply: Float!
+  burnRate: Float!
+  metadata: Json!
+}
+
+# Перечисления
+enum UserRole {
+  USER
+  ARTIST
+  CURATOR
+  ADMIN
+}
+
+enum UserLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+  MASTER
+}
+
+enum NFTType {
+  MUSIC
+  ART
+  COLLECTIBLE
+  EXPERIENCE
+  MERCHANDISE
+}
+
+enum NFTStatus {
+  MINTED
+  LISTED
+  SOLD
+  TRANSFERRED
+  BURNED
+}
+
+enum StakeStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum TokenType {
+  STANDARD
+  DEFLATIONARY
+  GOVERNANCE
+  UTILITY
+  NFT
+}
+
+enum RewardType {
+  STAKING
+  CREATING
+  CURATING
+  REFERRAL
+  AIRDROP
+}
+
+enum RewardStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum TransactionStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+}
+
+enum SortDirection {
+  ASC
+  DESC
+}
+
+enum TrackSortField {
+  CREATED_AT
+  UPDATED_AT
+  PLAY_COUNT
+  LIKE_COUNT
+  TITLE
+  ARTIST_NAME
+  PRICE
+}
+
+enum NFTSortField {
+  CREATED_AT
+  UPDATED_AT
+  PRICE
+  ROYALTY_PERCENTAGE
+  TOTAL_PURCHASES
+}
+
+# Web3 типы
+type Transaction {
+  signature: String!
+  slot: Int!
+  blockTime: Int
+  success: Boolean!
+  fee: Int!
+  instructions: [Json!]!
+}
+
+type PublicKey {
+  toBase58: String!
+}
+
+# Скаляр для загрузки файлов
+scalar Upload

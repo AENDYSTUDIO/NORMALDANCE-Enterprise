@@ -1,27 +1,17 @@
 groups:
-  - name: normaldance-alerts
+  - name: system_alerts
     rules:
-      # Оповещения о доступности
-      - alert: ServiceDown
-        expr: up == 0
-        for: 1m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Service {{ $labels.instance }} is down"
-          description: "Service {{ $labels.job }} has been down for more than 1 minute."
-
-      # Оповещения о высокой загрузке CPU
+      # High CPU usage
       - alert: HighCPUUsage
-        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
         for: 5m
         labels:
           severity: warning
         annotations:
           summary: "High CPU usage on {{ $labels.instance }}"
-          description: "CPU usage is above 80% for 5 minutes."
+          description: "CPU usage is above 80% for more than 5 minutes on {{ $labels.instance }}"
 
-      # Оповещения о высокой загрузке памяти
+      # High memory usage
       - alert: HighMemoryUsage
         expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
         for: 5m
@@ -29,246 +19,130 @@ groups:
           severity: warning
         annotations:
           summary: "High memory usage on {{ $labels.instance }}"
-          description: "Memory usage is above 85% for 5 minutes."
+          description: "Memory usage is above 85% for more than 5 minutes on {{ $labels.instance }}"
 
-      # Оповещения о дисковом пространстве
-      - alert: LowDiskSpace
+      # High disk usage
+      - alert: HighDiskUsage
         expr: (1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100 > 85
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "Low disk space on {{ $labels.instance }}"
-          description: "Disk space usage is above 85% on {{ $labels.mountpoint }}."
+          summary: "High disk usage on {{ $labels.instance }}"
+          description: "Disk usage is above 85% for more than 5 minutes on {{ $labels.instance }}"
 
-      # Оповещения о высокой нагрузке базы данных
-      - alert: HighDatabaseConnections
-        expr: pg_stat_database_numbackends / pg_settings_max_connections * 100 > 80
+      # Service down
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "Service {{ $labels.job }} on {{ $labels.instance }} is down for more than 1 minute"
+
+  - name: database_alerts
+    rules:
+      # PostgreSQL connection issues
+      - alert: PostgreSQLConnectionIssues
+        expr: pg_stat_database_numbackends > 80
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "High database connections on {{ $labels.datname }}"
-          description: "Database connections are above 80% of maximum."
+          summary: "High number of PostgreSQL connections"
+          description: "PostgreSQL has more than 80 active connections on {{ $labels.datname }}"
 
-      - alert: SlowDatabaseQueries
-        expr: rate(pg_stat_database_calls_total[5m]) / rate(pg_stat_database_total_time_seconds_total[5m]) > 100
+      # PostgreSQL slow queries
+      - alert: PostgreSQLSlowQueries
+        expr: rate(pg_stat_database_calls_total[5m]) > 100
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "Slow database queries on {{ $labels.datname }}"
-          description: "Database query rate is above 100 queries per second."
+          summary: "High number of PostgreSQL queries"
+          description: "PostgreSQL has more than 100 queries per second on {{ $labels.datname }}"
 
-      # Оповещения о Redis
+      # Redis memory usage
       - alert: RedisMemoryUsage
         expr: redis_memory_used_bytes / redis_memory_max_bytes * 100 > 80
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "High Redis memory usage on {{ $labels.instance }}"
-          description: "Redis memory usage is above 80%."
+          summary: "High Redis memory usage"
+          description: "Redis memory usage is above 80% on {{ $labels.instance }}"
 
-      # Оповещения о HTTP ошибках
+      # Redis connected clients
+      - alert: RedisConnectedClients
+        expr: redis_connected_clients > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High number of Redis connected clients"
+          description: "Redis has more than 100 connected clients on {{ $labels.instance }}"
+
+  - name: application_alerts
+    rules:
+      # High HTTP error rate
       - alert: HighHTTPErrorRate
         expr: (rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m])) * 100 > 5
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "High HTTP error rate on {{ $labels.instance }}"
-          description: "HTTP 5xx error rate is above 5%."
+          summary: "High HTTP error rate"
+          description: "HTTP error rate is above 5% for more than 5 minutes"
 
-      - alert: High4xxErrorRate
-        expr: (rate(http_requests_total{status=~"4.."}[5m]) / rate(http_requests_total[5m])) * 100 > 10
-        for: 5m
-        labels:
-          severity: info
-        annotations:
-          summary: "High HTTP 4xx error rate on {{ $labels.instance }}"
-          description: "HTTP 4xx error rate is above 10%."
-
-      # Оповещения о WebSocket соединениях
-      - alert: WebSocketConnectionsHigh
-        expr: websocket_connections > 1000
+      # High response time
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "High number of WebSocket connections"
-          description: "Number of WebSocket connections is above 1000."
+          summary: "High HTTP response time"
+          description: "95th percentile response time is above 2 seconds for more than 5 minutes"
 
-      # Оповещения о аудио потоках
-      - alert: HighAudioStreams
-        expr: rate(audio_streams_total[5m]) > 1000
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High number of audio streams"
-          description: "Audio streams rate is above 1000 per minute."
-
-      # Оповещения о NFT транзакциях
-      - alert: HighNFTTransactions
-        expr: rate(nft_transactions_total[5m]) > 100
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High number of NFT transactions"
-          description: "NFT transaction rate is above 100 per minute."
-
-      # Оповещения о Solana
-      - alert: SolanaSlotLag
-        expr: solana_slot_lag > 10
-        for: 1m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Solana slot lag detected"
-          description: "Solana slot lag is above 10 slots."
-
-      - alert: SolanaRPCErrorRate
-        expr: rate(solana_rpc_errors_total[5m]) / rate(solana_rpc_requests_total[5m]) * 100 > 5
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High Solana RPC error rate"
-          description: "Solana RPC error rate is above 5%."
-
-      # Оповещения о IPFS
-      - alert: IPFSDowntime
-        expr: up{job="ipfs"} == 0
+      # Application crashes
+      - alert: ApplicationCrashes
+        expr: rate(process_crashes_total[5m]) > 0
         for: 1m
         labels:
           severity: critical
         annotations:
-          summary: "IPFS node is down"
-          description: "IPFS node has been down for more than 1 minute."
+          summary: "Application crashes detected"
+          description: "Application has crashed {{ $value }} times in the last 5 minutes"
 
-      - alert: IPFSDiskUsage
-        expr: ipfs_repo_size_bytes / ipfs_repo_size_max_bytes * 100 > 85
+  - name: infrastructure_alerts
+    rules:
+      # Load balancer errors
+      - alert: LoadBalancerErrors
+        expr: rate(lb_http_errors_total[5m]) > 10
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "High IPFS disk usage"
-          description: "IPFS disk usage is above 85%."
+          summary: "High load balancer error rate"
+          description: "Load balancer has more than 10 errors per minute"
 
-      # Оповещения о Filecoin
-      - alert: FilecoinStorageDealFailures
-        expr: rate(filecoin_storage_deal_failures_total[5m]) > 5
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High Filecoin storage deal failures"
-          description: "Filecoin storage deal failure rate is above 5 per minute."
-
-      # Оповещения о платежах
-      - alert: PaymentProcessingErrors
-        expr: rate(payment_processing_errors_total[5m]) > 10
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High payment processing error rate"
-          description: "Payment processing error rate is above 10 per minute."
-
-      # Оповещения о пользователях
-      - alert: HighUserRegistrationRate
-        expr: rate(user_registrations_total[5m]) > 100
-        for: 5m
-        labels:
-          severity: info
-        annotations:
-          summary: "High user registration rate"
-          description: "User registration rate is above 100 per minute."
-
-      - alert: HighUserLoginRate
-        expr: rate(user_logins_total[5m]) > 500
-        for: 5m
-        labels:
-          severity: info
-        annotations:
-          summary: "High user login rate"
-          description: "User login rate is above 500 per minute."
-
-      # Оповещения о треках
-      - alert: HighTrackUploadRate
-        expr: rate(track_uploads_total[5m]) > 50
-        for: 5m
-        labels:
-          severity: info
-        annotations:
-          summary: "High track upload rate"
-          description: "Track upload rate is above 50 per minute."
-
-      - alert: HighTrackPlayRate
-        expr: rate(track_plays_total[5m]) > 10000
-        for: 5m
-        labels:
-          severity: info
-        annotations:
-          summary: "High track play rate"
-          description: "Track play rate is above 10000 per minute."
-
-      # Оповещения о системе
-      - alert: SystemLoadHigh
-        expr: node_load1 > 2
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High system load on {{ $labels.instance }}"
-          description: "System load (1m) is above 2."
-
-      - alert: HighNetworkTraffic
-        expr: rate(node_network_receive_bytes_total[5m]) / 1024 / 1024 > 100
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High network traffic on {{ $labels.instance }}"
-          description: "Network receive rate is above 100 MB/s."
-
-      # Оповещения о сертификатах SSL
-      - alert: SSLCertificateExpiring
-        expr: ssl_cert_expires_seconds < 86400  # 24 hours
-        for: 1h
-        labels:
-          severity: warning
-        annotations:
-          summary: "SSL certificate expiring soon on {{ $labels.instance }}"
-          description: "SSL certificate for {{ $labels.domain }} expires in {{ $value }} seconds."
-
-      # Оповещения о бэкапах
-      - alert: BackupFailed
-        expr: backup_success == 0
-        for: 1h
+      # Database connection pool exhausted
+      - alert: DatabaseConnectionPoolExhausted
+        expr: pg_stat_database_numbackends > 95
+        for: 2m
         labels:
           severity: critical
         annotations:
-          summary: "Backup failed"
-          description: "Last backup failed or hasn't been completed in the last hour."
+          summary: "Database connection pool exhausted"
+          description: "Database connection pool is almost exhausted on {{ $labels.datname }}"
 
-      # Оповещения о безопасности
-      - alert: TooManyFailedLoginAttempts
-        expr: rate(failed_login_attempts_total[5m]) > 10
-        for: 5m
+      # Redis connection issues
+      - alert: RedisConnectionIssues
+        expr: redis_connected_clients == 0
+        for: 1m
         labels:
-          severity: warning
+          severity: critical
         annotations:
-          summary: "High number of failed login attempts"
-          description: "Failed login attempts rate is above 10 per minute."
-
-      - alert: SuspiciousActivity
-        expr: rate(suspicious_activity_total[5m]) > 5
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Suspicious activity detected"
-          description: "Suspicious activity rate is above 5 per minute."
+          summary: "Redis connection issues"
+          description: "Redis has no connected clients on {{ $labels.instance }}"

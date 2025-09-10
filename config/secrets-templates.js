@@ -15,6 +15,193 @@ function generateSecret(length = 32) {
 }
 
 /**
+ * Класс для управления шаблонами секретов
+ */
+class SecretsTemplateManager {
+  constructor() {
+    this.templates = secretsTemplates;
+    this.platformConfigs = platformConfigs;
+  }
+
+  /**
+   * Получение шаблона для окружения
+   */
+  getTemplate(environment) {
+    return this.templates[environment] || null;
+  }
+
+  /**
+   * Получение всех шаблонов
+   */
+  getAllTemplates() {
+    return this.templates;
+  }
+
+  /**
+   * Получение конфигурации платформы
+   */
+  getPlatformConfig(platform) {
+    return this.platformConfigs[platform] || null;
+  }
+
+  /**
+   * Получение всех конфигураций платформ
+   */
+  getAllPlatformConfigs() {
+    return this.platformConfigs;
+  }
+
+  /**
+   * Валидация шаблона
+   */
+  validateTemplate(template) {
+    const errors = [];
+    
+    if (!template || !template.name) {
+      errors.push('Template name is required');
+    }
+    
+    if (!template.secrets || !Array.isArray(template.secrets)) {
+      errors.push('Template secrets must be an array');
+    }
+    
+    if (template.secrets) {
+      template.secrets.forEach((secret, index) => {
+        if (!secret.name) {
+          errors.push(`Secret at index ${index} must have a name`);
+        }
+        
+        if (secret.required && !secret.defaultValue) {
+          errors.push(`Required secret '${secret.name}' must have a default value`);
+        }
+        
+        if (secret.validation && secret.validation.pattern) {
+          try {
+            new RegExp(secret.validation.pattern);
+          } catch (e) {
+            errors.push(`Invalid regex pattern for secret '${secret.name}': ${e.message}`);
+          }
+        }
+      });
+    }
+    
+    return {
+      valid: errors.length === 0,
+      errors
+    };
+  }
+
+  /**
+   * Валидация секрета
+   */
+  validateSecret(environment, key, value) {
+    const template = this.getTemplate(environment);
+    if (!template) {
+      return false;
+    }
+
+    const secret = template.secrets.find(s => s.name === key);
+    if (!secret) {
+      return false;
+    }
+
+    if (secret.validation) {
+      const validation = secret.validation;
+      
+      if (validation.minLength && value.length < validation.minLength) {
+        return false;
+      }
+      
+      if (validation.maxLength && value.length > validation.maxLength) {
+        return false;
+      }
+      
+      if (validation.pattern && !new RegExp(validation.pattern).test(value)) {
+        return false;
+      }
+      
+      if (validation.forbiddenValues && validation.forbiddenValues.includes(value)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Получение обязательных секретов
+   */
+  getRequiredSecrets(environment) {
+    const template = this.getTemplate(environment);
+    if (!template) {
+      return [];
+    }
+
+    return template.secrets
+      .filter(secret => secret.required)
+      .map(secret => secret.name);
+  }
+
+  /**
+   * Получение необязательных секретов
+   */
+  getOptionalSecrets(environment) {
+    const template = this.getTemplate(environment);
+    if (!template) {
+      return [];
+    }
+
+    return template.secrets
+      .filter(secret => !secret.required)
+      .map(secret => secret.name);
+  }
+
+  /**
+   * Генерация отчета по шаблонам
+   */
+  generateReport() {
+    const report = {
+      templates: {},
+      platforms: {},
+      summary: {
+        totalTemplates: Object.keys(this.templates).length,
+        totalPlatforms: Object.keys(this.platformConfigs).length,
+        totalSecrets: 0,
+        requiredSecrets: 0,
+        optionalSecrets: 0
+      }
+    };
+
+    // Анализ шаблонов
+    Object.entries(this.templates).forEach(([env, template]) => {
+      report.templates[env] = {
+        name: template.name,
+        description: template.description,
+        secretsCount: template.secrets.length,
+        requiredSecrets: template.secrets.filter(s => s.required).length,
+        optionalSecrets: template.secrets.filter(s => !s.required).length
+      };
+      
+      report.summary.totalSecrets += template.secrets.length;
+      report.summary.requiredSecrets += template.secrets.filter(s => s.required).length;
+      report.summary.optionalSecrets += template.secrets.filter(s => !s.required).length;
+    });
+
+    // Анализ платформ
+    Object.entries(this.platformConfigs).forEach(([platform, config]) => {
+      report.platforms[platform] = {
+        name: config.name,
+        description: config.description,
+        requiredSecrets: config.requiredSecrets.length,
+        optionalSecrets: config.optionalSecrets.length
+      };
+    });
+
+    return report;
+  }
+}
+
+/**
  * Шаблоны секретов для окружений
  */
 const secretsTemplates = {
@@ -399,130 +586,10 @@ const platformConfigs = {
   }
 };
 
-/**
- * Утилиты для работы с шаблонами
- */
-const templateUtils = {
-  /**
-   * Получение шаблона для окружения
-   */
-  getTemplate(environment) {
-    return secretsTemplates[environment] || null;
-  },
-
-  /**
-   * Получение всех шаблонов
-   */
-  getAllTemplates() {
-    return secretsTemplates;
-  },
-
-  /**
-   * Получение конфигурации платформы
-   */
-  getPlatformConfig(platform) {
-    return platformConfigs[platform] || null;
-  },
-
-  /**
-   * Получение всех конфигураций платформ
-   */
-  getAllPlatformConfigs() {
-    return platformConfigs;
-  },
-
-  /**
-   * Валидация шаблона
-   */
-  validateTemplate(template) {
-    const errors = [];
-    
-    if (!template || !template.name) {
-      errors.push('Template name is required');
-    }
-    
-    if (!template.secrets || !Array.isArray(template.secrets)) {
-      errors.push('Template secrets must be an array');
-    }
-    
-    if (template.secrets) {
-      template.secrets.forEach((secret, index) => {
-        if (!secret.name) {
-          errors.push(`Secret at index ${index} must have a name`);
-        }
-        
-        if (secret.required && !secret.defaultValue) {
-          errors.push(`Required secret '${secret.name}' must have a default value`);
-        }
-        
-        if (secret.validation && secret.validation.pattern) {
-          try {
-            new RegExp(secret.validation.pattern);
-          } catch (e) {
-            errors.push(`Invalid regex pattern for secret '${secret.name}': ${e.message}`);
-          }
-        }
-      });
-    }
-    
-    return {
-      valid: errors.length === 0,
-      errors
-    };
-  },
-
-  /**
-   * Генерация отчета по шаблонам
-   */
-  generateReport() {
-    const report = {
-      templates: {},
-      platforms: {},
-      summary: {
-        totalTemplates: Object.keys(secretsTemplates).length,
-        totalPlatforms: Object.keys(platformConfigs).length,
-        totalSecrets: 0,
-        requiredSecrets: 0,
-        optionalSecrets: 0
-      }
-    };
-
-    // Анализ шаблонов
-    Object.entries(secretsTemplates).forEach(([env, template]) => {
-      report.templates[env] = {
-        name: template.name,
-        description: template.description,
-        secretsCount: template.secrets.length,
-        requiredSecrets: template.secrets.filter(s => s.required).length,
-        optionalSecrets: template.secrets.filter(s => !s.required).length
-      };
-      
-      report.summary.totalSecrets += template.secrets.length;
-      report.summary.requiredSecrets += template.secrets.filter(s => s.required).length;
-      report.summary.optionalSecrets += template.secrets.filter(s => !s.required).length;
-    });
-
-    // Анализ платформ
-    Object.entries(platformConfigs).forEach(([platform, config]) => {
-      report.platforms[platform] = {
-        name: config.name,
-        description: config.description,
-        requiredSecrets: config.requiredSecrets.length,
-        optionalSecrets: config.optionalSecrets.length
-      };
-    });
-
-    return report;
-  }
-};
-
-// Экспорт всех компонентов
+// Экспорт класса и утилит
 module.exports = {
+  SecretsTemplateManager,
+  templateUtils: new SecretsTemplateManager(),
   secretsTemplates,
-  platformConfigs,
-  templateUtils,
-  generateSecret
+  platformConfigs
 };
-
-// Экспорт по умолчанию для обратной совместимости
-module.exports.secretsTemplates = secretsTemplates;

@@ -1,466 +1,104 @@
-# GitLab CI/CD Pipeline для DNB1ST проекта
-# Автоматическое развертывание на Render
-
 stages:
-  - test
-  - build
-  - deploy
-  - monitor
+  - validate
+  - plan
+  - apply
+  - destroy
 
-# Переменные окружения
 variables:
-  NODE_VERSION: "20.x"
-  RENDER_SERVICE_DNB1ST_RU: "dnb1st-ru"
-  RENDER_SERVICE_DNB1ST_STORE: "dnb1st-store"
-  RENDER_API_TOKEN: $RENDER_API_TOKEN
-  RENDER_SERVICE_ID_DNB1ST_RU: $RENDER_SERVICE_ID_DNB1ST_RU
-  RENDER_SERVICE_ID_DNB1ST_STORE: $RENDER_SERVICE_ID_DNB1ST_STORE
+  TF_VERSION: "1.5.0"
+  TF_IN_AUTOMATION: "true"
 
-# Кэширование для ускорения сборки
-cache:
-  paths:
-    - node_modules/
-    - .next/
-  key: "$CI_COMMIT_REF_NAME"
+before_script:
+  - echo "Настройка Terraform"
+  - terraform --version
 
-# Установка зависимостей
-setup_dependencies:
-  stage: test
-  image: node:$NODE_VERSION
-  before_script:
-    - npm ci --cache .npm --prefer-offline
+# Установка Terraform
+install_terraform:
+  stage: validate
   script:
-    - npm run lint
-    - npm run test
-  coverage: '/Lines\s*:\s*(\d+\.\d+)%/'
-  artifacts:
-    reports:
-      coverage_report:
-        coverage_format: cobertura
-        path: coverage/cobertura-coverage.xml
+    - echo "Установка Terraform версии $TF_VERSION"
+    - wget https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip
+    - unzip terraform_${TF_VERSION}_linux_amd64.zip
+    - mv terraform /usr/local/bin/
+    - terraform --version
+  cache:
     paths:
-      - coverage/
+      - .terraform/
+  only:
+    - main
+    - develop
+
+# Инициализация Terraform
+terraform_init:
+  stage: validate
+  script:
+    - echo "Инициализация Terraform"
+    - terraform init
+    - terraform validate
+  cache:
+    paths:
+      - .terraform/
+  only:
+    - main
+    - develop
+
+# План инфраструктуры
+terraform_plan:
+  stage: plan
+  script:
+    - echo "План инфраструктуры"
+    - terraform plan -var-file=terraform/terraform.tfvars -out=tfplan
+  artifacts:
+    paths:
+      - tfplan
     expire_in: 1 week
   only:
     - main
     - develop
-    - merge_requests
-    - tags
 
-# Сборка приложения
-build_application:
-  stage: build
-  image: node:$NODE_VERSION
+# Применение инфраструктуры
+terraform_apply:
+  stage: apply
   script:
-    - npm ci --cache .npm --prefer-offline
-    - npm run build
-  artifacts:
-    paths:
-      - .next/
-      - out/
-    expire_in: 1 week
+    - echo "Применение инфраструктуры"
+    - terraform apply -auto-approve -var-file=terraform/terraform.tfvars
   only:
     - main
-    - develop
-    - tags
+  when: manual
 
-# Деплой основного сервиса (dnb1st.ru)
-deploy_dnb1st_ru:
-  stage: deploy
-  image: curlimages/curl:latest
+# Уничтожение инфраструктуры
+terraform_destroy:
+  stage: destroy
+  script:
+    - echo "Уничтожение инфраструктуры"
+    - terraform destroy -auto-approve -var-file=terraform/terraform.tfvars
+  only:
+    - main
+  when: manual
+
+# Мониторинг и health check
+monitoring:
+  stage: apply
+  script:
+    - echo "Проверка состояния инфраструктуры"
+    - terraform output -json > infrastructure.json
+    - echo "Инфраструктура развернута успешно"
+  only:
+    - main
   dependencies:
-    - build_application
+    - terraform_apply
+
+# Бэкап конфигурации
+backup_config:
+  stage: apply
   script:
-    - |
-      # Получаем текущий хэш коммита
-      COMMIT_SHA=$CI_COMMIT_SHA
-      BRANCH_NAME=$CI_COMMIT_REF_NAME
-      
-      # Определяем тип деплоя
-      if [[ "$CI_COMMIT_BRANCH" == "main" ]]; then
-        ENVIRONMENT="production"
-        SERVICE_NAME="$RENDER_SERVICE_DNB1ST_RU"
-        SERVICE_ID="$RENDER_SERVICE_ID_DNB1ST_RU"
-      elif [[ "$CI_COMMIT_BRANCH" == "develop" ]]; then
-        ENVIRONMENT="staging"
-        SERVICE_NAME="$RENDER_SERVICE_DNB1ST_RU"
-        SERVICE_ID="$RENDER_SERVICE_ID_DNB1ST_RU"
-      else
-        ENVIRONMENT="preview"
-        SERVICE_NAME="$RENDER_SERVICE_DNB1ST_RU-preview"
-        SERVICE_ID="$RENDER_SERVICE_ID_DNB1ST_RU"
-      fi
-      
-      echo "Deploying $SERVICE_NAME to $ENVIRONMENT environment..."
-      echo "Commit: $COMMIT_SHA"
-      echo "Branch: $BRANCH_NAME"
-      
-      # Создаем деплой на Render
-      curl -X POST \
-        -H "Authorization: Bearer $RENDER_API_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{
-          \"service_id\": \"$SERVICE_ID\",
-          \"env\": \"$ENVIRONMENT\",
-          \"git\": {
-            \"branch\": \"$BRANCH_NAME\",
-            \"commit_sha\": \"$COMMIT_SHA\"
-          },
-          \"env_vars\": [
-            {
-              \"key\": \"COMMIT_SHA\",
-              \"value\": \"$COMMIT_SHA\"
-            },
-            {
-              \"key\": \"BRANCH_NAME\",
-              \"value\": \"$BRANCH_NAME\"
-            },
-            {
-              \"key\": \"DEPLOY_ENVIRONMENT\",
-              \"value\": \"$ENVIRONMENT\"
-            }
-          ]
-        }" \
-        "https://api.render.com/v1/services/$SERVICE_ID/deploys"
-      
-      echo "Deployment triggered successfully for $SERVICE_NAME"
-  environment:
-    name: $CI_COMMIT_REF_NAME
-    url: https://$RENDER_SERVICE_DNB1ST_RU.onrender.com
+    - echo "Создание бэкапа конфигурации"
+    - mkdir -p backups
+    - cp terraform/*.tf backups/
+    - cp terraform/*.tfvars backups/
+    - tar -czf infrastructure-backup-$(date +%Y%m%d-%H%M%S).tar.gz backups/
+    - echo "Бэкап создан"
   only:
     - main
-    - develop
-    - merge_requests
-  when: manual
-
-# Деплой магазина (dnb1st.store)
-deploy_dnb1st_store:
-  stage: deploy
-  image: curlimages/curl:latest
   dependencies:
-    - build_application
-  script:
-    - |
-      # Получаем текущий хэш коммита
-      COMMIT_SHA=$CI_COMMIT_SHA
-      BRANCH_NAME=$CI_COMMIT_REF_NAME
-      
-      # Определяем тип деплоя
-      if [[ "$CI_COMMIT_BRANCH" == "main" ]]; then
-        ENVIRONMENT="production"
-        SERVICE_NAME="$RENDER_SERVICE_DNB1ST_STORE"
-        SERVICE_ID="$RENDER_SERVICE_ID_DNB1ST_STORE"
-      elif [[ "$CI_COMMIT_BRANCH" == "develop" ]]; then
-        ENVIRONMENT="staging"
-        SERVICE_NAME="$RENDER_SERVICE_DNB1ST_STORE"
-        SERVICE_ID="$RENDER_SERVICE_ID_DNB1ST_STORE"
-      else
-        ENVIRONMENT="preview"
-        SERVICE_NAME="$RENDER_SERVICE_DNB1ST_STORE-preview"
-        SERVICE_ID="$RENDER_SERVICE_ID_DNB1ST_STORE"
-      fi
-      
-      echo "Deploying $SERVICE_NAME to $ENVIRONMENT environment..."
-      echo "Commit: $COMMIT_SHA"
-      echo "Branch: $BRANCH_NAME"
-      
-      # Создаем деплой на Render
-      curl -X POST \
-        -H "Authorization: Bearer $RENDER_API_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{
-          \"service_id\": \"$SERVICE_ID\",
-          \"env\": \"$ENVIRONMENT\",
-          \"git\": {
-            \"branch\": \"$BRANCH_NAME\",
-            \"commit_sha\": \"$COMMIT_SHA\"
-          },
-          \"env_vars\": [
-            {
-              \"key\": \"COMMIT_SHA\",
-              \"value\": \"$COMMIT_SHA\"
-            },
-            {
-              \"key\": \"BRANCH_NAME\",
-              \"value\": \"$BRANCH_NAME\"
-            },
-            {
-              \"key\": \"DEPLOY_ENVIRONMENT\",
-              \"value\": \"$ENVIRONMENT\"
-            }
-          ]
-        }" \
-        "https://api.render.com/v1/services/$SERVICE_ID/deploys"
-      
-      echo "Deployment triggered successfully for $SERVICE_NAME"
-  environment:
-    name: $CI_COMMIT_REF_NAME
-    url: https://$RENDER_SERVICE_DNB1ST_STORE.onrender.com
-  only:
-    - main
-    - develop
-    - merge_requests
-  when: manual
-
-# Мониторинг деплоя
-monitor_deployment:
-  stage: monitor
-  image: curlimages/curl:latest
-  script:
-    - |
-      # Проверяем статус деплоя
-      SERVICE_ID="$RENDER_SERVICE_ID_DNB1ST_RU"
-      
-      # Получаем статус последнего деплоя
-      DEPLOY_STATUS=$(curl -s \
-        -H "Authorization: Bearer $RENDER_API_TOKEN" \
-        "https://api.render.com/v1/services/$SERVICE_ID/deploys" | \
-        jq -r '.[0].status')
-      
-      echo "Latest deployment status: $DEPLOY_STATUS"
-      
-      # Проверяем health endpoint
-      HEALTH_CHECK=$(curl -s -o /dev/null -w "%{http_code}" \
-        "https://$RENDER_SERVICE_DNB1ST_RU.onrender.com/api/health")
-      
-      echo "Health check status: $HEALTH_CHECK"
-      
-      # Отправляем уведомление в Slack при необходимости
-      if [[ "$DEPLOY_STATUS" == "succeeded" ]] && [[ "$HEALTH_CHECK" == "200" ]]; then
-        echo "✅ Deployment successful and healthy"
-        
-        # Отправляем уведомление в Slack
-        curl -X POST \
-          -H "Content-type: application/json" \
-          -d "{
-            \"text\": \"🚀 Deployment successful for $CI_PROJECT_NAME\",
-            \"attachments\": [
-              {
-                \"color\": \"good\",
-                \"fields\": [
-                  {
-                    \"title\": \"Service\",
-                    \"value\": \"$RENDER_SERVICE_DNB1ST_RU\",
-                    \"short\": true
-                  },
-                  {
-                    \"title\": \"Environment\",
-                    \"value\": \"$CI_COMMIT_REF_NAME\",
-                    \"short\": true
-                  },
-                  {
-                    \"title\": \"Commit\",
-                    \"value\": \"$CI_COMMIT_SHA\",
-                    \"short\": true
-                  },
-                  {
-                    \"title\": \"URL\",
-                    \"value\": \"https://$RENDER_SERVICE_DNB1ST_RU.onrender.com\",
-                    \"short\": false
-                  }
-                ]
-              }
-            ]
-          }" \
-          "$SLACK_WEBHOOK_URL"
-      else
-        echo "❌ Deployment failed or health check failed"
-        
-        # Отправляем уведомление об ошибке в Slack
-        curl -X POST \
-          -H "Content-type: application/json" \
-          -d "{
-            \"text\": \"❌ Deployment failed for $CI_PROJECT_NAME\",
-            \"attachments\": [
-              {
-                \"color\": \"danger\",
-                \"fields\": [
-                  {
-                    \"title\": \"Service\",
-                    \"value\": \"$RENDER_SERVICE_DNB1ST_RU\",
-                    \"short\": true
-                  },
-                  {
-                    \"title\": \"Environment\",
-                    \"value\": \"$CI_COMMIT_REF_NAME\",
-                    \"short\": true
-                  },
-                  {
-                    \"title\": \"Status\",
-                    \"value\": \"$DEPLOY_STATUS\",
-                    \"short\": true
-                  },
-                  {
-                    \"title\": \"Health Check\",
-                    \"value\": \"$HEALTH_CHECK\",
-                    \"short\": true
-                  },
-                  {
-                    \"title\": \"Commit\",
-                    \"value\": \"$CI_COMMIT_SHA\",
-                    \"short\": false
-                  }
-                ]
-              }
-            ]
-          }" \
-          "$SLACK_WEBHOOK_URL"
-        
-        exit 1
-      fi
-  only:
-    - main
-    - develop
-    - merge_requests
-  when: on_success
-
-# Откат деплоя (rollback)
-rollback_deployment:
-  stage: deploy
-  image: curlimages/curl:latest
-  script:
-    - |
-      SERVICE_ID="$RENDER_SERVICE_ID_DNB1ST_RU"
-      
-      # Получаем список деплоев
-      DEPLOYS=$(curl -s \
-        -H "Authorization: Bearer $RENDER_API_TOKEN" \
-        "https://api.render.com/v1/services/$SERVICE_ID/deploys")
-      
-      # Находим предыдущий успешный деплой
-      PREVIOUS_DEPLOY=$(echo "$DEPLOYS" | jq -r '.[] | select(.status == "succeeded") | .id' | head -2 | tail -1)
-      
-      if [[ -n "$PREVIOUS_DEPLOY" ]]; then
-        echo "Rolling back to deployment: $PREVIOUS_DEPLOY"
-        
-        # Создаем деплой с предыдущего коммита
-        curl -X POST \
-          -H "Authorization: Bearer $RENDER_API_TOKEN" \
-          -H "Content-Type: application/json" \
-          -d "{
-            \"service_id\": \"$SERVICE_ID\",
-            \"env\": \"production\",
-            \"git\": {
-              \"commit_sha\": \"$(echo \"$DEPLOYS\" | jq -r --arg id "$PREVIOUS_DEPLOY" '.[] | select(.id == $id) | .git.commit_sha')\"
-            }
-          }" \
-          "https://api.render.com/v1/services/$SERVICE_ID/deploys"
-        
-        echo "Rollback initiated successfully"
-      else
-        echo "No previous successful deployment found"
-        exit 1
-      fi
-  environment:
-    name: production
-    url: https://$RENDER_SERVICE_DNB1ST_RU.onrender.com
-  when: manual
-  only:
-    - main
-
-# Уведомление о завершении пайплайна
-pipeline_notification:
-  stage: monitor
-  image: curlimages/curl:latest
-  script:
-    - |
-      if [[ "$CI_JOB_STATUS" == "success" ]]; then
-        EMOJI="✅"
-        COLOR="good"
-        STATUS="Success"
-      else
-        EMOJI="❌"
-        COLOR="danger"
-        STATUS="Failed"
-      fi
-      
-      curl -X POST \
-        -H "Content-type: application/json" \
-        -d "{
-          \"text\": \"$EMOJI Pipeline $STATUS for $CI_PROJECT_NAME\",
-          \"attachments\": [
-            {
-              \"color\": \"$COLOR\",
-              \"fields\": [
-                {
-                  \"title\": \"Project\",
-                  \"value\": \"$CI_PROJECT_NAME\",
-                  \"short\": true
-                },
-                {
-                  \"title\": \"Branch\",
-                  \"value\": \"$CI_COMMIT_BRANCH\",
-                  \"short\": true
-                },
-                {
-                  \"title\": \"Commit\",
-                  \"value\": \"$CI_COMMIT_SHA\",
-                  \"short\": true
-                },
-                {
-                  \"title\": \"Job\",
-                  \"value\": \"$CI_JOB_NAME\",
-                  \"short\": true
-                },
-                {
-                  \"title\": \"Status\",
-                  \"value\": \"$STATUS\",
-                  \"short\": true
-                },
-                {
-                  \"title\": \"URL\",
-                  \"value\": \"$CI_PIPELINE_URL\",
-                  \"short\": false
-                }
-              ]
-            }
-          ]
-        }" \
-        "$SLACK_WEBHOOK_URL"
-  only:
-    - main
-    - develop
-    - merge_requests
-
-# Задачи для безопасности
-security_scan:
-  stage: test
-  image: node:$NODE_VERSION
-  script:
-    - npm ci --cache .npm --prefer-offline
-    - npm audit --audit-level moderate
-    - npm audit --audit-level high --audit-level critical
-  allow_failure: true
-  only:
-    - main
-    - develop
-    - tags
-
-# Задачи для производительности
-performance_test:
-  stage: test
-  image: node:$NODE_VERSION
-  script:
-    - npm ci --cache .npm --prefer-offline
-    - npm run build
-    - npm run test:performance
-  allow_failure: true
-  only:
-    - main
-    - tags
-
-# Задачи для документации
-generate_docs:
-  stage: build
-  image: node:$NODE_VERSION
-  script:
-    - npm ci --cache .npm --prefer-offline
-    - npm run generate:docs
-  artifacts:
-    paths:
-      - docs/
-    expire_in: 1 week
-  only:
-    - main
-    - develop
-    - tags
+    - terraform_apply

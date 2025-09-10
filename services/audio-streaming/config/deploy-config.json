@@ -1,0 +1,173 @@
+{
+  "environments": {
+    "development": {
+      "domain": "dev.dnb1st.ru",
+      "ssl": {
+        "enabled": true,
+        "provider": "letsencrypt",
+        "email": "admin@dnb1st.ru"
+      },
+      "services": {
+        "api": {
+          "port": 3000,
+          "replicas": 1,
+          "resources": {
+            "memory": "512m",
+            "cpu": "0.5"
+          }
+        },
+        "streaming": {
+          "port": 8080,
+          "replicas": 1,
+          "resources": {
+            "memory": "1g",
+            "cpu": "1"
+          }
+        },
+        "postgres": {
+          "port": 5432,
+          "resources": {
+            "memory": "512m",
+            "cpu": "0.5"
+          }
+        },
+        "redis": {
+          "port": 6379,
+          "resources": {
+            "memory": "256m",
+            "cpu": "0.25"
+          }
+        }
+      },
+      "backup": {
+        "enabled": true,
+        "schedule": "0 2 * * *",
+        "retention_days": 7
+      },
+      "monitoring": {
+        "enabled": true,
+        "prometheus_port": 9090,
+        "grafana_port": 3001
+      },
+      "notifications": {
+        "webhook_url": "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+      },
+      "cleanup_images": false
+    },
+    "staging": {
+      "domain": "staging.dnb1st.ru",
+      "ssl": {
+        "enabled": true,
+        "provider": "letsencrypt",
+        "email": "admin@dnb1st.ru"
+      },
+      "services": {
+        "api": {
+          "port": 3000,
+          "replicas": 2,
+          "resources": {
+            "memory": "1g",
+            "cpu": "1"
+          }
+        },
+        "streaming": {
+          "port": 8080,
+          "replicas": 2,
+          "resources": {
+            "memory": "2g",
+            "cpu": "2"
+          }
+        },
+        "postgres": {
+          "port": 5432,
+          "resources": {
+            "memory": "1g",
+            "cpu": "1"
+          }
+        },
+        "redis": {
+          "port": 6379,
+          "resources": {
+            "memory": "512m",
+            "cpu": "0.5"
+          }
+        }
+      },
+      "backup": {
+        "enabled": true,
+        "schedule": "0 3 * * *",
+        "retention_days": 14
+      },
+      "monitoring": {
+        "enabled": true,
+        "prometheus_port": 9090,
+        "grafana_port": 3001
+      },
+      "notifications": {
+        "webhook_url": "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+      },
+      "cleanup_images": true
+    },
+    "production": {
+      "domain": "dnb1st.ru",
+      "ssl": {
+        "enabled": true,
+        "provider": "letsencrypt",
+        "email": "admin@dnb1st.ru"
+      },
+      "services": {
+        "api": {
+          "port": 3000,
+          "replicas": 3,
+          "resources": {
+            "memory": "2g",
+            "cpu": "2"
+          }
+        },
+        "streaming": {
+          "port": 8080,
+          "replicas": 3,
+          "resources": {
+            "memory": "4g",
+            "cpu": "4"
+          }
+        },
+        "postgres": {
+          "port": 5432,
+          "resources": {
+            "memory": "4g",
+            "cpu": "2"
+          }
+        },
+        "redis": {
+          "port": 6379,
+          "resources": {
+            "memory": "1g",
+            "cpu": "1"
+          }
+        }
+      },
+      "backup": {
+        "enabled": true,
+        "schedule": "0 4 * * *",
+        "retention_days": 30
+      },
+      "monitoring": {
+        "enabled": true,
+        "prometheus_port": 9090,
+        "grafana_port": 3001
+      },
+      "notifications": {
+        "webhook_url": "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+      },
+      "cleanup_images": true
+    }
+  },
+  "global": {
+    "docker_registry": "ghcr.io",
+    "image_prefix": "dnb1st/audio-streaming",
+    "image_tag": "latest",
+    "network_name": "audio-streaming-network",
+    "volume_prefix": "audio-streaming"
+  }
+}

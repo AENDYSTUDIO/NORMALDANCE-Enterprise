@@ -1,0 +1,122 @@
+groups:
+  - name: audio-streaming
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: audio-streaming
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.job }} has been down for more than 1 minute"
+
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          service: audio-streaming
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }} errors per second"
+
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 3m
+        labels:
+          severity: warning
+          service: audio-streaming
+        annotations:
+          summary: "High response time detected"
+          description: "95th percentile response time is {{ $value }} seconds"
+
+      - alert: HighMemoryUsage
+        expr: (container_memory_usage_bytes / container_spec_memory_limit_bytes) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          service: audio-streaming
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value | humanizePercentage }}"
+
+      - alert: HighCPUUsage
+        expr: rate(container_cpu_usage_seconds_total[5m]) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: audio-streaming
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is {{ $value | humanizePercentage }}"
+
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) < 0.1
+        for: 5m
+        labels:
+          severity: critical
+          service: audio-streaming
+        annotations:
+          summary: "Low disk space"
+          description: "Disk space is {{ $value | humanizePercentage }} on {{ $labels.mountpoint }}"
+
+      - alert: DatabaseConnectionsHigh
+        expr: pg_stat_activity_count > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: audio-streaming
+        annotations:
+          summary: "High database connections"
+          description: "Database has {{ $value }} active connections"
+
+      - alert: RedisMemoryHigh
+        expr: (redis_memory_used_bytes / redis_memory_max_bytes) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          service: audio-streaming
+        annotations:
+          summary: "High Redis memory usage"
+          description: "Redis memory usage is {{ $value | humanizePercentage }}"
+
+      - alert: SSLCertificateExpiry
+        expr: (probe_ssl_earliest_cert_expiry - time()) < 86400 * 7
+        for: 1h
+        labels:
+          severity: warning
+          service: audio-streaming
+        annotations:
+          summary: "SSL certificate expiring soon"
+          description: "SSL certificate expires in {{ $value | humanizeDuration }}"
+
+      - alert: AudioUploadRateDrop
+        expr: rate(audio_uploads_total[5m]) < 0.1
+        for: 10m
+        labels:
+          severity: warning
+          service: audio-streaming
+        annotations:
+          summary: "Audio upload rate dropped"
+          description: "Audio upload rate is {{ $value }} uploads per second"
+
+      - alert: PaymentProcessingErrors
+        expr: rate(payments_processed_total{status="failed"}[5m]) > 0.01
+        for: 2m
+        labels:
+          severity: critical
+          service: audio-streaming
+        annotations:
+          summary: "Payment processing errors"
+          description: "Payment failure rate is {{ $value }} failures per second"
+
+      - alert: SearchLatencyHigh
+        expr: histogram_quantile(0.95, rate(search_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          service: audio-streaming
+        annotations:
+          summary: "Search latency high"
+          description: "95th percentile search latency is {{ $value }} seconds"

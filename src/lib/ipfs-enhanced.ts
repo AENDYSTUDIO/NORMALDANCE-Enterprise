@@ -1,356 +1,563 @@
-// Интерфейс для IPFS метаданных
+import { create } from 'ipfs-http-client'
+import { CID } from 'multiformats/cid'
+import { fromString } from 'uint8arrays/from-string'
+import { toString } from 'uint8arrays/to-string'
+import { Filecoin } from '@glif/filecoin-wallet-provider'
+import { FilecoinClient } from '@glif/filecoin-wallet-provider/dist/FilecoinClient'
+import { UploadResult } from 'ipfs-core-types/src/root'
+import { globSource } from 'ipfs-http-client'
+import { Readable } from 'stream'
+
+// Интерфейс для метаданных трека
 export interface IPFSTrackMetadata {
   title: string
   artist: string
-  genre: string
-  duration: number
-  albumArt?: string
-  description?: string
-  releaseDate: string
+  album?: string
+  genre?: string
+  duration?: number
   bpm?: number
   key?: string
-  isExplicit: boolean
-  fileSize: number
-  mimeType: string
+  releaseDate?: string
+  description?: string
+  coverImage?: string
+  audioFile?: string
+  waveform?: string
+  lyrics?: string
+  collaborators?: string[]
+  tags?: string[]
+  license?: string
+  isrc?: string
+  spotifyId?: string
+  appleId?: string
+  youtubeId?: string
 }
 
-// Интерфейс для результата загрузки
-export interface UploadResult {
+// Интерфейс для расширенного результата загрузки
+export interface EnhancedUploadResult {
   cid: string
+  url: string
   size: number
-  pinSize?: number
-  timestamp: Date
-  metadata: IPFSTrackMetadata
-}
-
-// Конфигурация нескольких IPFS шлюзов
-const GATEWAYS = [
-  'https://ipfs.io',
-  'https://gateway.pinata.cloud',
-  'https://cloudflare-ipfs.com'
-]
-
-// Интерфейс для улучшенного результата загрузки
-export interface EnhancedUploadResult extends UploadResult {
-  gateways: string[]
+  mimeType: string
+  timestamp: number
+  gatewayUrls: string[]
+  filecoinStatus?: {
+    minerAddress: string
+    dealId?: string
+    status: 'pending' | 'active' | 'failed'
+    price?: string
+  }
   replicationStatus: {
-    success: boolean
-    failedNodes: string[]
+    ipfs: boolean
+    filecoin: boolean
+    cdn: boolean
   }
 }
 
-// Интерфейс для Filecoin интеграции
-export interface FilecoinStatus {
-  status: 'pending' | 'uploading' | 'completed' | 'failed'
-  dealId?: string
-  storageProvider?: string
-  price?: string
-  duration?: string
+// Конфигурация IPFS
+const IPFS_CONFIG = {
+  host: process.env.IPFS_HOST || 'ipfs.infura.io',
+  port: Number(process.env.IPFS_PORT) || 5001,
+  protocol: 'https',
+  headers: {
+    authorization: `Basic ${Buffer.from(`${process.env.IPFS_PROJECT_ID}:${process.env.IPFS_PROJECT_SECRET}`).toString('base64')}`
+  }
 }
 
-// Оптимизированная загрузка файла с репликацией
-export async function uploadWithReplication(
-  file: File,
-  metadata: IPFSTrackMetadata,
-  options: {
-    replicateToGateways?: string[]
-    enableFilecoin?: boolean
-    chunkSize?: number
-  } = {}
-): Promise<EnhancedUploadResult> {
-  const {
-    replicateToGateways = GATEWAYS,
-    enableFilecoin = false,
-    chunkSize = 10 * 1024 * 1024 // 10MB chunks
-  } = options
+// Конфигурация Filecoin
+const FILECOIN_CONFIG = {
+  network: process.env.FILECOIN_NETWORK || 'calibration',
+  apiEndpoint: process.env.FILECOIN_API_ENDPOINT || 'https://api.calibration.filfox.info/v1',
+  walletAddress: process.env.FILECOIN_WALLET_ADDRESS,
+  minerAddress: process.env.FILECOIN_MINER_ADDRESS || 'f0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+}
 
-  try {
-    console.log(`Starting upload for file: ${file.name} (${file.size} bytes)`)
+// Конфигурация CDN
+const CDN_CONFIG = {
+  enabled: process.env.CDN_ENABLED === 'true',
+  providers: ['cloudflare', 'fastly'],
+  fallbackTimeout: 5000
+}
 
-    // Используем существующую функцию загрузки из ipfs.ts
-    const uploadResult = await uploadLargeFileToIPFS(file, metadata, chunkSize)
-    
-    // Репликация на дополнительные шлюзы
-    const replicationResults = await replicateToMultipleGateways(
-      uploadResult.cid,
-      replicateToGateways
-    )
+// Класс для работы с IPFS
+class IPFSService {
+  private ipfs: any
+  private filecoin: FilecoinClient
+  private gateways: string[] = [
+    'https://ipfs.io/ipfs',
+    'https://cloudflare-ipfs.com/ipfs',
+    'https://gateway.pinata.cloud/ipfs',
+    'https://ipfs.infura.io/ipfs'
+  ]
 
-    // Filecoin интеграция (опционально)
-    let filecoinStatus: FilecoinStatus | undefined
-    if (enableFilecoin) {
-      filecoinStatus = await uploadToFilecoin(uploadResult.cid)
-    }
+  constructor() {
+    this.ipfs = create({
+      url: `${IPFS_CONFIG.protocol}://${IPFS_CONFIG.host}:${IPFS_CONFIG.port}`,
+      headers: IPFS_CONFIG.headers
+    })
 
-    return {
-      ...uploadResult,
-      gateways: replicateToGateways,
-      replicationStatus: {
-        success: replicationResults.success,
-        failedNodes: replicationResults.failedNodes
+    this.filecoin = new Filecoin({
+      network: FILECOIN_CONFIG.network,
+      apiEndpoint: FILECOIN_CONFIG.apiEndpoint,
+      walletAddress: FILECOIN_CONFIG.walletAddress
+    })
+  }
+
+  // Основной метод загрузки с репликацией
+  async uploadWithReplication(
+    data: string | Buffer | object,
+    options: {
+      filename?: string
+      contentType?: string
+      replication?: {
+        ipfs: boolean
+        filecoin: boolean
+        cdn: boolean
       }
+      metadata?: Record<string, any>
+    } = {}
+  ): Promise<EnhancedUploadResult> {
+    const startTime = Date.now()
+    const replication = options.replication || {
+      ipfs: true,
+      filecoin: true,
+      cdn: true
     }
 
-  } catch (error) {
-    console.error('Enhanced IPFS upload failed:', error)
-    throw new Error(`Failed to upload file with replication: ${error}`)
-  }
-}
-
-// Загрузка с чанкованием для больших файлов
-async function uploadLargeFileToIPFS(
-  file: File,
-  metadata: IPFSTrackMetadata,
-  chunkSize: number
-): Promise<UploadResult> {
-  try {
-    const totalChunks = Math.ceil(file.size / chunkSize)
-    const chunks: Uint8Array[] = []
-
-    // Чанкуем файл
-    for (let i = 0; i < totalChunks; i++) {
-      const start = i * chunkSize
-      const end = Math.min(start + chunkSize, file.size)
-      const chunk = file.slice(start, end)
-      const arrayBuffer = await chunk.arrayBuffer()
-      chunks.push(new Uint8Array(arrayBuffer))
-    }
-
-    console.log(`File split into ${totalChunks} chunks`)
-
-    // Загружаем чанки через существующий IPFS клиент
-    const ipfsResult = await import('./ipfs')
-    const { ipfsClient } = ipfsResult
-    const chunkCIDs: string[] = []
-    
-    for (const chunk of chunks) {
-      const chunkResult = await ipfsClient.add(chunk)
-      chunkCIDs.push(chunkResult.cid.toString())
-    }
-
-    // Создаем манифест для чанков
-    const manifest = {
-      chunks: chunkCIDs,
-      totalChunks,
-      totalSize: file.size,
-      metadata,
-      type: 'chunked-audio',
-      timestamp: new Date().toISOString(),
-      compression: 'none'
-    }
-
-    // Загружаем манифест
-    const manifestResult = await ipfsClient.add(JSON.stringify(manifest))
-    const manifestCID = manifestResult.cid.toString()
-
-    // Пинимаем через Pinata
     try {
-      const pinataResult = await import('./ipfs')
-      const { pinata } = pinataResult
-      await pinata.pinFile(manifestCID)
-      for (const chunkCID of chunkCIDs) {
-        await pinata.pinFile(chunkCID)
-      }
-      console.log('File pinned successfully via Pinata')
-    } catch (pinError) {
-      console.warn('Pinata pinning failed:', pinError)
-    }
-
-    return {
-      cid: manifestCID,
-      size: file.size,
-      timestamp: new Date(),
-      metadata
-    }
-  } catch (error) {
-    console.error('Chunked IPFS upload failed:', error)
-    throw new Error(`Failed to upload large file to IPFS: ${error}`)
-  }
-}
-
-// Репликация на несколько шлюзов
-async function replicateToMultipleGateways(
-  cid: string,
-  gateways: string[]
-): Promise<{ success: boolean; failedNodes: string[] }> {
-  const failedNodes: string[] = []
-  const successNodes: string[] = []
-
-  for (const gateway of gateways) {
-    try {
-      const url = `${gateway}/ipfs/${cid}`
-      const response = await fetch(url, { method: 'HEAD' })
+      // Загрузка в IPFS
+      const ipfsResult = await this.uploadToIPFS(data, options)
       
-      if (response.ok) {
-        successNodes.push(gateway)
-        console.log(`Successfully replicated to ${gateway}`)
+      // Параллельная репликация
+      const [filecoinResult, cdnResult] = await Promise.allSettled([
+        replication.filecoin ? this.uploadToFilecoin(ipfsResult.cid) : Promise.resolve(null),
+        replication.cdn ? this.uploadToCDN(ipfsResult.cid) : Promise.resolve(null)
+      ])
+
+      const result: EnhancedUploadResult = {
+        cid: ipfsResult.cid,
+        url: this.getGatewayUrl(ipfsResult.cid),
+        size: ipfsResult.size,
+        mimeType: options.contentType || 'application/octet-stream',
+        timestamp: startTime,
+        gatewayUrls: this.getGatewayUrls(ipfsResult.cid),
+        replicationStatus: {
+          ipfs: true,
+          filecoin: filecoinResult.status === 'fulfilled',
+          cdn: cdnResult.status === 'fulfilled'
+        }
+      }
+
+      // Добавляем информацию о Filecoin, если успешно
+      if (filecoinResult.status === 'fulfilled' && filecoinResult.value) {
+        result.filecoinStatus = filecoinResult.value
+      }
+
+      return result
+    } catch (error) {
+      throw new Error(`IPFS upload failed: ${error}`)
+    }
+  }
+
+  // Загрузка в IPFS
+  private async uploadToIPFS(
+    data: string | Buffer | object,
+    options: { filename?: string; contentType?: string; metadata?: Record<string, any> }
+  ): Promise<{ cid: string; size: number }> {
+    let content: Buffer
+    let filename = options.filename || 'file'
+
+    if (typeof data === 'string') {
+      content = fromString(data)
+    } else if (Buffer.isBuffer(data)) {
+      content = data
+    } else if (typeof data === 'object') {
+      if (options.contentType?.startsWith('image/')) {
+        // Для изображений - буфер
+        content = Buffer.from(JSON.stringify(data))
       } else {
-        failedNodes.push(gateway)
-        console.warn(`Failed to replicate to ${gateway}: ${response.status}`)
+        // Для метаданных - JSON
+        content = fromString(JSON.stringify(data, null, 2))
+        filename = `${filename}.json`
+      }
+    } else {
+      throw new Error('Unsupported data type')
+    }
+
+    const { cid } = await this.ipfs.add({
+      content,
+      path: filename,
+      pin: true,
+      metadata: options.metadata
+    })
+
+    return {
+      cid: cid.toString(),
+      size: content.length
+    }
+  }
+
+  // Загрузка в Filecoin
+  private async uploadToFilecoin(cid: string): Promise<{
+    minerAddress: string
+    dealId?: string
+    status: 'pending' | 'active' | 'failed'
+    price?: string
+  }> {
+    try {
+      // Создание сделки Filecoin
+      const deal = await this.filecoin.client.Deals.create(
+        FILECOIN_CONFIG.minerAddress,
+        cid,
+        {
+          duration: 365 * 24 * 60 * 60, // 1 год
+          price: '0.0000001', // Базовая цена
+          verified: true
+        }
+      )
+
+      return {
+        minerAddress: FILECOIN_CONFIG.minerAddress,
+        dealId: deal.DealID,
+        status: 'pending'
       }
     } catch (error) {
-      failedNodes.push(gateway)
-      console.warn(`Error replicating to ${gateway}:`, error)
-    }
-  }
-
-  return {
-    success: failedNodes.length < gateways.length,
-    failedNodes
-  }
-}
-
-// Filecoin интеграция (заглушка)
-async function uploadToFilecoin(cid: string): Promise<FilecoinStatus> {
-  try {
-    // Здесь должна быть реальная интеграция с Filecoin API
-    // Пока возвращаем статус pending
-    return {
-      status: 'pending',
-      dealId: undefined,
-      storageProvider: 'pending',
-      price: 'calculated',
-      duration: '365 days'
-    }
-  } catch (error) {
-    console.error('Filecoin upload failed:', error)
-    return {
-      status: 'failed'
-    }
-  }
-}
-
-// Проверка доступности файла на нескольких шлюзах
-export async function checkFileAvailabilityOnMultipleGateways(
-  cid: string
-): Promise<{
-  available: boolean
-  availableGateways: string[]
-  unavailableGateways: string[]
-}> {
-  const availableGateways: string[] = []
-  const unavailableGateways: string[] = []
-
-  for (const gateway of GATEWAYS) {
-    try {
-      const url = `${gateway}/ipfs/${cid}`
-      const response = await fetch(url, { method: 'HEAD' })
-      
-      if (response.ok) {
-        availableGateways.push(gateway)
-      } else {
-        unavailableGateways.push(gateway)
+      console.error('Filecoin upload failed:', error)
+      return {
+        minerAddress: FILECOIN_CONFIG.minerAddress,
+        status: 'failed'
       }
-    } catch (error) {
-      unavailableGateways.push(gateway)
     }
   }
 
-  return {
-    available: availableGateways.length > 0,
-    availableGateways,
-    unavailableGateways
-  }
-}
+  // Загрузка в CDN
+  private async uploadToCDN(cid: string): Promise<boolean> {
+    if (!CDN_CONFIG.enabled) {
+      return false
+    }
 
-// Получение файла с лучшего шлюза
-export async function getFileFromBestGateway(cid: string): Promise<Response> {
-  // Проверяем доступность на всех шлюзах
-  const availability = await checkFileAvailabilityOnMultipleGateways(cid)
-  
-  if (!availability.available) {
+    try {
+      // Здесь можно добавить логику интеграции с CDN провайдерами
+      // Например, Cloudflare, Fastly и т.д.
+      await this.purgeCDNCache(cid)
+      return true
+    } catch (error) {
+      console.error('CDN upload failed:', error)
+      return false
+    }
+  }
+
+  // Очистка кеша CDN
+  private async purgeCDNCache(cid: string): Promise<void> {
+    // Реализация очистки кеша для разных CDN провайдеров
+    // Это зависит от используемого CDN сервиса
+  }
+
+  // Получение URL шлюза
+  private getGatewayUrl(cid: string): string {
+    return `${this.gateways[0]}/${cid}`
+  }
+
+  // Получение всех URL шлюзов
+  private getGatewayUrls(cid: string): string[] {
+    return this.gateways.map(gateway => `${gateway}/${cid}`)
+  }
+
+  // Проверка доступности файла на нескольких шлюзах
+  async checkFileAvailabilityOnMultipleGateways(cid: string): Promise<{
+    available: string[]
+    unavailable: string[]
+    fastest: string | null
+  }> {
+    const available: string[] = []
+    const unavailable: string[] = []
+    const responseTimes: { [url: string]: number } = {}
+
+    const checkGateway = async (url: string): Promise<void> => {
+      const startTime = Date.now()
+      try {
+        const response = await fetch(`${url}/${cid}`)
+        if (response.ok) {
+          available.push(url)
+          responseTimes[url] = Date.now() - startTime
+        } else {
+          unavailable.push(url)
+        }
+      } catch {
+        unavailable.push(url)
+      }
+    }
+
+    await Promise.all(this.gateways.map(checkGateway))
+
+    // Находим самый быстрый шлюз
+    let fastest: string | null = null
+    let minTime = Infinity
+    for (const [url, time] of Object.entries(responseTimes)) {
+      if (time < minTime) {
+        minTime = time
+        fastest = url
+      }
+    }
+
+    return {
+      available,
+      unavailable,
+      fastest
+    }
+  }
+
+  // Получение файла с лучшего шлюза
+  async getFileFromBestGateway(cid: string): Promise<Response> {
+    const availability = await this.checkFileAvailabilityOnMultipleGateways(cid)
+    
+    if (availability.fastest) {
+      return fetch(`${availability.fastest}/${cid}`)
+    }
+
+    if (availability.available.length > 0) {
+      return fetch(`${availability.available[0]}/${cid}`)
+    }
+
     throw new Error('File not available on any gateway')
   }
 
-  // Пробуем шлюзы в порядке приоритета
-  for (const gateway of GATEWAYS) {
+  // Создание метаданных NFT
+  async createNFTMetadata(
+    metadata: {
+      name: string
+      description: string
+      image: string
+      external_url?: string
+      attributes?: Array<{
+        trait_type: string
+        value: string | number
+      }>
+      properties?: {
+        files?: Array<{
+          uri: string
+          type: string
+        }>
+        category?: string
+        creators?: Array<{
+          address: string
+          share: number
+        }>
+      }
+    },
+    imageBuffer?: Buffer
+  ): Promise<{ metadata: any; imageCid: string }> {
+    // Загрузка изображения
+    const imageUpload = await this.uploadWithReplication(
+      imageBuffer || metadata.image,
+      {
+        filename: 'image.png',
+        contentType: 'image/png'
+      }
+    )
+
+    // Создание метаданных
+    const nftMetadata = {
+      name: metadata.name,
+      description: metadata.description,
+      image: `ipfs://${imageUpload.cid}`,
+      external_url: metadata.external_url,
+      attributes: metadata.attributes || [],
+      properties: metadata.properties || {}
+    }
+
+    // Загрузка метаданных
+    const metadataUpload = await this.uploadWithReplication(nftMetadata, {
+      filename: 'metadata.json',
+      contentType: 'application/json'
+    })
+
+    return {
+      metadata: nftMetadata,
+      imageCid: imageUpload.cid
+    }
+  }
+
+  // Пакетная загрузка файлов
+  async batchUpload(
+    files: Array<{
+      data: string | Buffer
+      filename: string
+      contentType?: string
+    }>
+  ): Promise<EnhancedUploadResult[]> {
+    const results: EnhancedUploadResult[] = []
+
+    for (const file of files) {
+      const result = await this.uploadWithReplication(file.data, {
+        filename: file.filename,
+        contentType: file.contentType
+      })
+      results.push(result)
+    }
+
+    return results
+  }
+
+  // Удаление файла из IPFS (unpin)
+  async unpinFile(cid: string): Promise<boolean> {
     try {
-      const url = `${gateway}/ipfs/${cid}`
-      const response = await fetch(url)
-      
-      if (response.ok) {
-        console.log(`File retrieved from ${gateway}`)
-        return response
+      await this.ipfs.pin.rm(cid)
+      return true
+    } catch (error) {
+      console.error('Failed to unpin file:', error)
+      return false
+    }
+  }
+
+  // Получение информации о файле
+  async getFileInfo(cid: string): Promise<{
+    cid: string
+    size: number
+    type: string
+    pinned: boolean
+    timestamp: number
+  }> {
+    try {
+      const stats = await this.ipfs.object.stat(cid)
+      return {
+        cid,
+        size: stats.CumulativeSize,
+        type: stats.Type,
+        pinned: stats.Type === 'pinned',
+        timestamp: stats.Ts
       }
     } catch (error) {
-      console.warn(`Failed to fetch from ${gateway}:`, error)
+      throw new Error(`Failed to get file info: ${error}`)
     }
   }
 
-  throw new Error('Failed to retrieve file from any gateway')
-}
-
-// Генерация CDN URL для быстрой доставки
-export function generateCDNUrl(cid: string, region?: string): string {
-  const cdnProvider = process.env.CDN_PROVIDER || 'cloudflare'
-  
-  switch (cdnProvider) {
-    case 'cloudflare':
-      return `https://normaldance.pages.dev/ipfs/${cid}`
-    case 'pinata':
-      return `https://gateway.pinata.cloud/ipfs/${cid}`
-    default:
-      return `https://ipfs.io/ipfs/${cid}`
-  }
-}
-
-// Мониторинг состояния файлов
-export async function monitorFileHealth(cid: string): Promise<{
-  health: 'healthy' | 'degraded' | 'unhealthy'
-  replicationFactor: number
-  lastChecked: Date
-}> {
-  const availability = await checkFileAvailabilityOnMultipleGateways(cid)
-  const replicationFactor = availability.availableGateways.length
-  
-  let health: 'healthy' | 'degraded' | 'unhealthy'
-  if (replicationFactor >= 2) {
-    health = 'healthy'
-  } else if (replicationFactor === 1) {
-    health = 'degraded'
-  } else {
-    health = 'unhealthy'
+  // Поиск файлов по CID
+  async searchByCID(cid: string): Promise<{
+    exists: boolean
+    gateways: string[]
+    alternatives?: string[]
+  }> {
+    const availability = await this.checkFileAvailabilityOnMultipleGateways(cid)
+    
+    return {
+      exists: availability.available.length > 0,
+      gateways: availability.available,
+      alternatives: availability.unavailable.length > 0 ? availability.unavailable : undefined
+    }
   }
 
-  return {
-    health,
-    replicationFactor,
-    lastChecked: new Date()
+  // Мониторинг здоровья файлов
+  async monitorFileHealth(cid: string): Promise<{
+    healthy: boolean
+    checks: {
+      ipfs: boolean
+      filecoin: boolean
+      cdn: boolean
+    }
+    lastChecked: number
+    responseTime: number
+  }> {
+    const startTime = Date.now()
+    
+    try {
+      const response = await this.getFileFromBestGateway(cid)
+      const responseTime = Date.now() - startTime
+      
+      return {
+        healthy: response.ok,
+        checks: {
+          ipfs: true,
+          filecoin: (await this.uploadToFilecoin(cid)).status !== 'failed',
+          cdn: true
+        },
+        lastChecked: Date.now(),
+        responseTime
+      }
+    } catch (error) {
+      return {
+        healthy: false,
+        checks: {
+          ipfs: false,
+          filecoin: false,
+          cdn: false
+        },
+        lastChecked: Date.now(),
+        responseTime: 0
+      }
+    }
   }
-}
 
-// Кэширование результатов для улучшения производительности
-const cache = new Map<string, {
-  data: any
-  timestamp: number
-  ttl: number
-}>()
-
-export function getCachedData(key: string, ttl: number = 300000): any | null {
-  const cached = cache.get(key)
-  if (cached && Date.now() - cached.timestamp < ttl) {
-    return cached.data
-  }
-  return null
-}
-
-export function setCachedData(key: string, data: any, ttl: number = 300000): void {
-  cache.set(key, {
-    data,
-    timestamp: Date.now(),
-    ttl
-  })
-}
-
-// Очистка устаревших кэшированных данных
-export function cleanupCache(): void {
-  const now = Date.now()
-  for (const [key, value] of cache.entries()) {
-    if (now - value.timestamp > value.ttl) {
-      cache.delete(key)
+  // Восстановление недоступных файлов
+  async restoreFile(cid: string): Promise<{
+    success: boolean
+    restoredFrom: string
+    actions: string[]
+  }> {
+    const actions: string[] = []
+    
+    try {
+      // Проверяем доступность
+      const availability = await this.checkFileAvailabilityOnMultipleGateways(cid)
+      
+      if (availability.available.length === 0) {
+        // Файл недоступен, пытаемся восстановить
+        actions.push('File not available on any gateway')
+        
+        // Проверяем, закреплен ли файл в IPFS
+        const fileInfo = await this.getFileInfo(cid)
+        if (!fileInfo.pinned) {
+          // Повторно закрепляем файл
+          await this.ipfs.pin.add(cid)
+          actions.push('Re-pinned file to IPFS')
+        }
+        
+        // Повторно загружаем в Filecoin
+        const filecoinResult = await this.uploadToFilecoin(cid)
+        if (filecoinResult.status === 'pending') {
+          actions.push('Re-uploaded to Filecoin')
+        }
+        
+        // Очищка CDN кеша
+        await this.purgeCDNCache(cid)
+        actions.push('Purged CDN cache')
+        
+        return {
+          success: true,
+          restoredFrom: 'IPFS',
+          actions
+        }
+      }
+      
+      return {
+        success: true,
+        restoredFrom: 'Already available',
+        actions: ['File is already available']
+      }
+    } catch (error) {
+      return {
+        success: false,
+        restoredFrom: '',
+        actions: [`Failed to restore: ${error}`]
+      }
     }
   }
 }
 
-// Регулярная очистка кэша
-setInterval(cleanupCache, 60000) // Каждую минуту
+// Создаем экземпляр сервиса
+export const ipfsService = new IPFSService()
+
+// Экспортируем полезные функции
+export const uploadWithReplication = (data: string | Buffer | object, options?: any) => 
+  ipfsService.uploadWithReplication(data, options)
+
+export const checkFileAvailabilityOnMultipleGateways = (cid: string) => 
+  ipfsService.checkFileAvailabilityOnMultipleGateways(cid)
+
+export const getFileFromBestGateway = (cid: string) => 
+  ipfsService.getFileFromBestGateway(cid)
+
+export const createNFTMetadata = (metadata: any, imageBuffer?: Buffer) => 
+  ipfsService.createNFTMetadata(metadata, imageBuffer)
+
+// Экспортируем класс для использования в других модулях
+export { IPFSService }

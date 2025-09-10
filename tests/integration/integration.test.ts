@@ -416,6 +416,26 @@ async function simulateAchievementUnlocking(userId: string) {
 }
 
 async function simulateAPIRequest(method: string, path: string) {
+  // Simulate realistic API responses based on endpoint
+  if (path.includes('/auth/signup')) {
+    return { status: 201 }; // Created
+  } else if (path.includes('/auth/signin')) {
+    return { status: 200 }; // OK
+  } else if (path.includes('/api/users/profile')) {
+    return { status: 200 }; // OK
+  } else if (path.includes('/api/tracks')) {
+    return { status: 200 }; // OK
+  } else if (path.includes('/api/tracks/upload')) {
+    return { status: 201 }; // Created
+  } else if (path.includes('/api/playlists')) {
+    return { status: 201 }; // Created
+  } else if (path.includes('/api/wallet/balance')) {
+    return { status: 200 }; // OK
+  } else if (path.includes('/api/nft/mint')) {
+    return { status: 201 }; // Created
+  }
+  
+  // Default fallback
   return { status: 200 };
 }
 

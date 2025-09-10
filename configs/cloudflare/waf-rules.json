@@ -1,0 +1,23 @@
+{
+  "rules": [
+    {
+      "id": "block_sql_injection",
+      "expression": "(http.request.uri.query contains \"union select\" or http.request.uri.query contains \"drop table\")",
+      "action": "block"
+    },
+    {
+      "id": "block_xss_attempts", 
+      "expression": "(http.request.uri.query contains \"<script\" or http.request.body contains \"javascript:\")",
+      "action": "block"
+    },
+    {
+      "id": "rate_limit_api",
+      "expression": "(http.request.uri.path matches \"^/api/\")",
+      "action": "challenge",
+      "ratelimit": {
+        "threshold": 100,
+        "period": 60
+      }
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'NormalDance Production Environment'
+
+Resources:
+  EKSCluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: normaldance-production
+      Version: '1.28'
+      RoleArn: !GetAtt EKSServiceRole.Arn
+
+  Database:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      DBClusterIdentifier: normaldance-production
+      Engine: aurora-postgresql
+      EngineVersion: '15.4'
+      MasterUsername: normaldance
+      DatabaseName: normaldance
+      BackupRetentionPeriod: 30
+      StorageEncrypted: true
+
+  BackupBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: normaldance-backups-production
+      VersioningConfiguration:
+        Status: Enabled
+
+  EKSServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy

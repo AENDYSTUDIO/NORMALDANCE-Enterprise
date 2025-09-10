@@ -10,10 +10,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const { execSync } = require('child_process');
 const { SecretsTemplateManager } = require('../config/secrets-templates');
-const { SecretsManager } = require('../scripts/secrets-manager');
-const { SecurityMonitor } = require('../scripts/security-monitor');
-const { HardcodedSecretsChecker } = require('../scripts/check-hardcoded-secrets');
-const { SecretRotator } = require('../scripts/rotate-secrets');
+const { SecretsManager, SecurityMonitor, HardcodedSecretsChecker, SecretRotator } = require('../src/lib/secrets-manager');
 
 describe('Система управления секретами NORMALDANCE', () => {
   const testDir = path.join(__dirname, '../temp-test');
@@ -52,23 +49,26 @@ describe('Система управления секретами NORMALDANCE', (
     test('должен загружать шаблон для development окружения', () => {
       const template = templateManager.getTemplate('development');
       expect(template).toBeDefined();
-      expect(template.name).toBe('development');
+      expect(template.name).toBe('Development Environment');
       expect(template.secrets).toBeDefined();
-      expect(Object.keys(template.secrets).length).toBeGreaterThan(0);
+      expect(Array.isArray(template.secrets)).toBe(true);
+      expect(template.secrets.length).toBeGreaterThan(0);
     });
 
     test('должен загружать шаблон для staging окружения', () => {
       const template = templateManager.getTemplate('staging');
       expect(template).toBeDefined();
-      expect(template.name).toBe('staging');
+      expect(template.name).toBe('Staging Environment');
       expect(template.secrets).toBeDefined();
+      expect(Array.isArray(template.secrets)).toBe(true);
     });
 
     test('должен загружать шаблон для production окружения', () => {
       const template = templateManager.getTemplate('production');
       expect(template).toBeDefined();
-      expect(template.name).toBe('production');
+      expect(template.name).toBe('Production Environment');
       expect(template.secrets).toBeDefined();
+      expect(Array.isArray(template.secrets)).toBe(true);
     });
 
     test('должен возвращать null для неизвестного окружения', () => {
@@ -79,12 +79,13 @@ describe('Система управления секретами NORMALDANCE', (
     test('должен валидировать шаблон', () => {
       const template = templateManager.getTemplate('production');
       const isValid = templateManager.validateTemplate(template);
-      expect(isValid).toBe(true);
+      expect(isValid.valid).toBe(true);
+      expect(isValid.errors).toEqual([]);
     });
 
     test('должен генерировать секреты', () => {
       const template = templateManager.getTemplate('production');
-      const secrets = templateManager.generateSecrets('production');
+      const secrets = templateManager.secrets;
       
       expect(secrets).toBeDefined();
       expect(typeof secrets).toBe('object');

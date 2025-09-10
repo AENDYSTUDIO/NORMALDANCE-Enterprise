@@ -1,10 +1,9 @@
 global:
   smtp_smarthost: 'localhost:587'
-  smtp_from: 'alerts@normaldance.com'
-  smtp_auth_username: 'alerts@normaldance.com'
-  smtp_auth_password: '${SMTP_PASSWORD}'
+  smtp_from: 'alertmanager@cloud.ru'
+  smtp_auth_username: 'alertmanager@cloud.ru'
+  smtp_auth_password: 'your-smtp-password'
 
-# Время хранения уведомлений
 route:
   group_by: ['alertname']
   group_wait: 10s
@@ -12,129 +11,26 @@ route:
   repeat_interval: 1h
   receiver: 'web.hook'
 
-# Маршрутизация уведомлений
-routes:
-  - match:
-      severity: critical
-    receiver: 'critical'
-    continue: true
-    
-  - match:
-      severity: warning
-    receiver: 'warning'
-    continue: true
-    
-  - match:
-      severity: info
-    receiver: 'info'
-
-# Получатели уведомлений
 receivers:
-  - name: 'web.hook'
-    email_configs:
-      - to: 'devops@normaldance.com'
-        subject: '🚨 NormalDance Alert: {{ .GroupLabels.alertname }}'
-        body: |
-          {{ range .Alerts }}
-          Alert: {{ .Annotations.summary }}
-          Description: {{ .Annotations.description }}
-          Labels: {{ .Labels }}
-          {{ end }}
-          
-  - name: 'critical'
-    email_configs:
-      - to: 'emergency@normaldance.com'
-        subject: '🚨 CRITICAL: {{ .GroupLabels.alertname }}'
-        body: |
-          {{ range .Alerts }}
-          CRITICAL ALERT: {{ .Annotations.summary }}
-          Description: {{ .Annotations.description }}
-          Instance: {{ .Labels.instance }}
-          Time: {{ .StartsAt }}
-          {{ end }}
-          
-    slack_configs:
-      - api_url: '${SLACK_WEBHOOK_URL}'
-        channel: '#alerts-critical'
-        title: '🚨 CRITICAL Alert'
-        text: |
-          {{ range .Alerts }}
-          *{{ .Annotations.summary }}*
-          {{ .Annotations.description }}
-          Instance: {{ .Labels.instance }}
-          Time: {{ .StartsAt }}
-          {{ end }}
-          
-    webhook_configs:
-      - url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
-        send_resolved: true
+- name: 'web.hook'
+  email_configs:
+  - to: 'admin@cloud.ru'
+    subject: 'Cloud.ru Infrastructure Alert: {{ .GroupLabels.alertname }}'
+    body: |
+      {{ range .Alerts }}
+      Alert: {{ .Annotations.summary }}
+      Description: {{ .Annotations.description }}
+      Status: {{ .Status }}
+      Labels: {{ .Labels }}
+      {{ end }}
+  
+  webhook_configs:
+  - url: 'http://webhook:5001/'
+    send_resolved: true
 
-  - name: 'warning'
-    email_configs:
-      - to: 'devops@normaldance.com'
-        subject: '⚠️ WARNING: {{ .GroupLabels.alertname }}'
-        body: |
-          {{ range .Alerts }}
-          WARNING: {{ .Annotations.summary }}
-          Description: {{ .Annotations.description }}
-          Instance: {{ .Labels.instance }}
-          Time: {{ .StartsAt }}
-          {{ end }}
-          
-    slack_configs:
-      - api_url: '${SLACK_WEBHOOK_URL}'
-        channel: '#alerts-warning'
-        title: '⚠️ Warning Alert'
-        text: |
-          {{ range .Alerts }}
-          *{{ .Annotations.summary }}*
-          {{ .Annotations.description }}
-          Instance: {{ .Labels.instance }}
-          Time: {{ .StartsAt }}
-          {{ end }}
-          
-    webhook_configs:
-      - url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
-        send_resolved: true
-
-  - name: 'info'
-    email_configs:
-      - to: 'devops@normaldance.com'
-        subject: 'ℹ️ INFO: {{ .GroupLabels.alertname }}'
-        body: |
-          {{ range .Alerts }}
-          INFO: {{ .Annotations.summary }}
-          Description: {{ .Annotations.description }}
-          Instance: {{ .Labels.instance }}
-          Time: {{ .StartsAt }}
-          {{ end }}
-          
-    slack_configs:
-      - api_url: '${SLACK_WEBHOOK_URL}'
-        channel: '#alerts-info'
-        title: 'ℹ️ Info Alert'
-        text: |
-          {{ range .Alerts }}
-          *{{ .Annotations.summary }}*
-          {{ .Annotations.description }}
-          Instance: {{ .Labels.instance }}
-          Time: {{ .StartsAt }}
-          {{ end }}
-
-# Ингибиторы (подавление уведомлений)
 inhibit_rules:
   - source_match:
       severity: 'critical'
     target_match:
       severity: 'warning'
     equal: ['alertname', 'dev', 'instance']
-    
-  - source_match:
-      severity: 'warning'
-    target_match:
-      severity: 'info'
-    equal: ['alertname', 'dev', 'instance']
-
-# Шаблоны уведомлений
-templates:
-  - '/etc/alertmanager/templates/*.tmpl'

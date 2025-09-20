@@ -1,0 +1,13 @@
+{
+  "functions": {
+    "edge/functions/track-metadata.ts": {
+      "runtime": "edge"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/edge/tracks/:id",
+      "destination": "/edge/functions/track-metadata?id=:id"
+    }
+  ]
+}

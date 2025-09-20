@@ -95,22 +95,23 @@ class AudioLRUCache {
   }
 
   private evictLRU(): void {
-    let oldestKey = ''
-    let oldestTime = Date.now()
-
-    for (const [key, item] of this.cache.entries()) {
-      if (item.timestamp < oldestTime) {
-        oldestTime = item.timestamp
-        oldestKey = key
-      }
-    }
-
-    if (oldestKey) {
-      const item = this.cache.get(oldestKey)!
+    // Use iterator for O(1) LRU eviction
+    const firstEntry = this.cache.entries().next().value
+    if (firstEntry) {
+      const [key, item] = firstEntry
       this.currentSize -= item.size
-      this.cache.delete(oldestKey)
-      console.log(`Evicted audio from cache: ${oldestKey}`)
+      this.cache.delete(key)
+      console.log(`Evicted audio from cache: ${key}`)
     }
+  }
+
+  private async evictLRUAsync(): Promise<void> {
+    return new Promise(resolve => {
+      setTimeout(() => {
+        this.evictLRU()
+        resolve()
+      }, 0)
+    })
   }
 
   getStats() {

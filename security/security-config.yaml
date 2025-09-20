@@ -1,0 +1,63 @@
+# 🔒 Enterprise Security Configuration
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: security-config
+data:
+  rate-limit-window: "900000"
+  rate-limit-max: "1000"
+  auth-rate-limit-max: "5"
+  
+  security-headers: |
+    X-Frame-Options: DENY
+    X-Content-Type-Options: nosniff
+    X-XSS-Protection: 1; mode=block
+    Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+    Referrer-Policy: strict-origin-when-cross-origin
+    Permissions-Policy: geolocation=(), microphone=(), camera=()
+  
+  csp-policy: |
+    default-src 'self';
+    script-src 'self' 'unsafe-inline' 'unsafe-eval';
+    style-src 'self' 'unsafe-inline';
+    img-src 'self' data: https:;
+    connect-src 'self' https:;
+    font-src 'self' https:;
+    object-src 'none';
+    base-uri 'self';
+    form-action 'self';
+    frame-ancestors 'none';
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: normaldance-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: normaldance
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 3000
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: postgres
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443

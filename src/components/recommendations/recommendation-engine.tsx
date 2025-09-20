@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, Badge, Button } from '@/components/ui'
 import { Music, Play, Heart, TrendingUp, Users, Clock, Star } from '@/components/icons'
+import { AIRecommendationEngine } from '@/lib/ai/recommendation-engine'
 
 interface Track {
   id: string
@@ -29,6 +30,8 @@ interface CollaborativeRecommendation {
   reason: string
 }
 
+const aiEngine = new AIRecommendationEngine();
+
 export function RecommendationEngine() {
   const [recommendations, setRecommendations] = useState<Track[]>([])
   const [loading, setLoading] = useState(false)
@@ -43,7 +46,7 @@ export function RecommendationEngine() {
       { trackId: '3', playCount: 8, rating: 5.0, timestamp: new Date('2024-01-17') },
       { trackId: '4', playCount: 2, rating: 3.5, timestamp: new Date('2024-01-18') }
     ]
-    setData([])
+    setListeningHistory(mockHistory)
   }, [])
 
   const generatePersonalRecommendations = async (): Promise<Track[]> => {

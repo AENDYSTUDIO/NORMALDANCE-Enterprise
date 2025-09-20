@@ -1,61 +1,51 @@
 import { NextRequest, NextResponse } from 'next/server'
-
-// Simple in-memory rate limiting (для начала)
-const requestCounts = new Map<string, { count: number; resetTime: number }>()
-
-function simpleRateLimit(ip: string, limit = 100, windowMs = 60000): boolean {
-  const now = Date.now()
-  const record = requestCounts.get(ip)
-  
-  if (!record || now > record.resetTime) {
-    requestCounts.set(ip, { count: 1, resetTime: now + windowMs })
-    return true
-  }
-  
-  if (record.count >= limit) {
-    return false
-  }
-  
-  record.count++
-  return true
-}
+import { adaptiveLimit, geoLimit, behaviorLimit } from './middleware/advanced-rate-limiter'
+import { ultimateSecurityMiddleware } from './middleware/ultimate-security'
 
 export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl
+  
+  // Apply security layers
+  const securityResult = await ultimateSecurityMiddleware()(request)
+  if (securityResult instanceof NextResponse) {
+    return securityResult
+  }
+  
+  // Apply rate limiting based on path
+  if (pathname.startsWith('/api/')) {
+    // Adaptive rate limiting
+    const adaptiveResult = await adaptiveLimit(request as any, NextResponse as any, () => {})
+    if (adaptiveResult) return adaptiveResult
+    
+    // Geographic filtering
+    const geoResult = await geoLimit(request as any, NextResponse as any, () => {})
+    if (geoResult) return geoResult
+    
+    // Behavioral analysis
+    const behaviorResult = await behaviorLimit(request as any, NextResponse as any, () => {})
+    if (behaviorResult) return behaviorResult
+  }
+  
   // Security headers
   const response = NextResponse.next()
   
-  // CSP
-  response.headers.set(
-    'Content-Security-Policy',
-    "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src 'self' https: blob:; connect-src 'self' https: wss:;"
-  )
-  
-  // Security headers
   response.headers.set('X-Frame-Options', 'DENY')
   response.headers.set('X-Content-Type-Options', 'nosniff')
-  response.headers.set('Referrer-Policy', 'origin-when-cross-origin')
-  response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+  response.headers.set('X-XSS-Protection', '1; mode=block')
+  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
+  response.headers.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()')
+  response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload')
   
-  // HTTPS redirect
-  if (process.env.NODE_ENV === 'production' && !request.url.startsWith('https://')) {
-    return NextResponse.redirect(`https://${request.nextUrl.host}${request.nextUrl.pathname}`)
-  }
-  
-  // Simple rate limiting for API routes
-  if (request.nextUrl.pathname.startsWith('/api/')) {
-    const ip = request.ip ?? '127.0.0.1'
-    
-    if (!simpleRateLimit(ip)) {
-      return new NextResponse('Too Many Requests', { status: 429 })
-    }
-  }
+  // CSP
+  response.headers.set('Content-Security-Policy', 
+    "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https:; font-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none';"
+  )
   
   return response
 }
 
 export const config = {
   matcher: [
-    // Exclude API from middleware to avoid interfering with routes during dev
-    '/((?!api|_next/static|_next/image|favicon.ico).*)',
+    '/((?!_next/static|_next/image|favicon.ico).*)',
   ],
 }

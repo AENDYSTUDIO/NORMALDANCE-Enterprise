@@ -1,0 +1,126 @@
+{
+  "dashboard": {
+    "title": "NORMALDANCE SLA/SLI Dashboard",
+    "tags": ["sla", "sli", "enterprise"],
+    "timezone": "UTC",
+    "refresh": "30s",
+    "panels": [
+      {
+        "title": "API Availability SLI",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "avg_over_time(up{job=\"normaldance-api\"}[5m]) * 100",
+            "legendFormat": "API Availability %"
+          }
+        ],
+        "thresholds": [
+          {"color": "red", "value": 0},
+          {"color": "yellow", "value": 99},
+          {"color": "green", "value": 99.9}
+        ],
+        "unit": "percent"
+      },
+      {
+        "title": "Response Time SLI (95th percentile)",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) * 1000",
+            "legendFormat": "95th percentile (ms)"
+          }
+        ],
+        "thresholds": [
+          {"color": "green", "value": 0},
+          {"color": "yellow", "value": 500},
+          {"color": "red", "value": 1000}
+        ],
+        "unit": "ms"
+      },
+      {
+        "title": "Error Rate SLI",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{status=~\"5..\"}[5m]) / rate(http_requests_total[5m]) * 100",
+            "legendFormat": "Error Rate %"
+          }
+        ],
+        "thresholds": [
+          {"color": "green", "value": 0},
+          {"color": "yellow", "value": 0.1},
+          {"color": "red", "value": 1}
+        ],
+        "unit": "percent"
+      },
+      {
+        "title": "SLO Compliance",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "slo_compliance_percentage",
+            "format": "table"
+          }
+        ],
+        "columns": [
+          {"text": "Service", "value": "service"},
+          {"text": "SLO", "value": "slo_name"},
+          {"text": "Target", "value": "target"},
+          {"text": "Current", "value": "current"},
+          {"text": "Compliance", "value": "compliance"}
+        ]
+      },
+      {
+        "title": "Error Budget Burn Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "error_budget_burn_rate",
+            "legendFormat": "{{service}} - {{slo_name}}"
+          }
+        ],
+        "yAxes": [
+          {"label": "Burn Rate", "min": 0}
+        ],
+        "alert": {
+          "conditions": [
+            {
+              "query": {"queryType": "", "refId": "A"},
+              "reducer": {"type": "last", "params": []},
+              "evaluator": {"params": [2], "type": "gt"}
+            }
+          ],
+          "executionErrorState": "alerting",
+          "noDataState": "no_data",
+          "frequency": "10s",
+          "handler": 1,
+          "name": "High Error Budget Burn Rate",
+          "message": "Error budget is burning too fast"
+        }
+      }
+    ]
+  },
+  "slos": [
+    {
+      "name": "API Availability",
+      "service": "normaldance-api",
+      "target": 99.9,
+      "window": "30d",
+      "query": "avg_over_time(up{job=\"normaldance-api\"}[30d]) * 100"
+    },
+    {
+      "name": "API Latency",
+      "service": "normaldance-api", 
+      "target": 500,
+      "window": "30d",
+      "query": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[30d])) * 1000"
+    },
+    {
+      "name": "Error Rate",
+      "service": "normaldance-api",
+      "target": 0.1,
+      "window": "30d",
+      "query": "rate(http_requests_total{status=~\"5..\"}[30d]) / rate(http_requests_total[30d]) * 100"
+    }
+  ]
+}

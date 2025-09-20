@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  auth-service:
+    build: ./auth-service
+    ports:
+      - "3001:3001"
+    environment:
+      - JWT_SECRET=${JWT_SECRET}
+    
+  music-service:
+    build: ./music-service
+    ports:
+      - "3002:3002"
+    
+  nft-service:
+    build: ./nft-service
+    ports:
+      - "3003:3003"
+    
+  api-gateway:
+    build: ./api-gateway
+    ports:
+      - "3000:3000"
+    depends_on:
+      - auth-service
+      - music-service
+      - nft-service

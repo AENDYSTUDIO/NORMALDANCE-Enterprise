@@ -1,5 +1,10 @@
 'use client'
 
+import { lazy, Suspense } from 'react';
+
+const CrossChainWallet = lazy(() => import('@/components/wallet/cross-chain-wallet'));
+const RecommendationEngine = lazy(() => import('@/components/recommendations/recommendation-engine'));
+
 export default function HomePage() {
 
   return (
@@ -56,9 +61,18 @@ export default function HomePage() {
           </div>
         </div>
         
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+          <Suspense fallback={<div className="animate-pulse bg-gray-700 h-64 rounded-lg"></div>}>
+            <CrossChainWallet />
+          </Suspense>
+          <Suspense fallback={<div className="animate-pulse bg-gray-700 h-64 rounded-lg"></div>}>
+            <RecommendationEngine />
+          </Suspense>
+        </div>
+        
         <div style={{ textAlign: 'center', opacity: 0.7 }}>
           <p style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>
-            🚀 <strong>Статус:</strong> MVP готов | Solana | IPFS | Web3
+            🚀 <strong>Статус:</strong> Enhanced with AI, GraphQL, Microservices & Cross-chain
           </p>
         </div>
       </div>

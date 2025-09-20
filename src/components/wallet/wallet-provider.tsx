@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button'
 
 import { WalletConnect } from './wallet-connect'
 import { walletEmitter } from './wallet-adapter'
+import { CrossChainWallet } from './cross-chain-wallet'
 
 // Интерфейс для контекста кошелька
 interface WalletContextType {

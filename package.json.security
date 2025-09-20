@@ -1,0 +1,14 @@
+{
+  "scripts": {
+    "security:audit": "npm audit --audit-level=moderate",
+    "security:scan": "docker run --rm -v $(pwd):/app securecodewarrior/docker-security-scan /app",
+    "security:test": "node verify-security.js",
+    "performance:test": "lighthouse http://localhost:3000 --output=json --output-path=./performance-report.json",
+    "build:secure": "docker build -f Dockerfile.ultra-secure -t normaldance:ultra-secure .",
+    "deploy:secure": "docker-compose -f docker-compose.security.yml up -d"
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "^3.0.1",
+    "helmet": "^7.1.0"
+  }
+}

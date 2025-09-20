@@ -88,7 +88,7 @@ graph TB
 
 ```bash
 # Clone the repository
-git clone https://github.com/normaldance/NORMALDANCE-Enterprise.git
+git clone https://github.com/AENDYSTUDIO/NORMALDANCE-Enterprise.git
 cd NORMALDANCE-Enterprise
 
 # Install dependencies

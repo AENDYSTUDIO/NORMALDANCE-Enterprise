@@ -1,4 +1,4 @@
-FROM node:18-alpine AS base
+FROM node:24-alpine AS base
 
 # Security: Install security updates
 RUN apk update && apk upgrade && \
@@ -15,7 +15,7 @@ RUN npm ci --only=production --no-audit --no-fund && \
     npm cache clean --force && \
     rm -rf /tmp/* /root/.npm
 
-FROM node:18-alpine AS build
+FROM node:24-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --no-audit --no-fund
@@ -28,7 +28,7 @@ COPY --from=base /etc/group /etc/group
 COPY --from=base /usr/bin/dumb-init /usr/bin/dumb-init
 COPY --from=base /lib/ld-musl-x86_64.so.1 /lib/ld-musl-x86_64.so.1
 
-FROM node:18-alpine AS runtime
+FROM node:24-alpine AS runtime
 
 # Security: Remove unnecessary packages
 RUN apk del --purge apk-tools && \

@@ -1,16 +1,16 @@
-FROM node:18-alpine AS base
+FROM node:24-alpine AS base
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --only=production && npm cache clean --force
 
-FROM node:18-alpine AS build
+FROM node:24-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM node:18-alpine AS runtime
+FROM node:24-alpine AS runtime
 
 # Security hardening
 RUN apk --no-cache add dumb-init && rm -rf /var/cache/apk/*
